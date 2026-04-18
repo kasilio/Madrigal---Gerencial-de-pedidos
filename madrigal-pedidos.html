@@ -1544,20 +1544,23 @@ function gerarPDF(id) {
     normal(6); doc.text('Agroneg.', M+14, y+17, {align:'center'});
   }
 
-  // Nome empresa
-  bold(20); setG(...G);
-  doc.text('MADRIGAL AGRONEGÓCIOS LTDA', M+32, y+9);
-  normal(8.5); setG(80,80,80);
-  doc.text(`CNPJ: 66.014.625/0001-10  |  São José dos Pinhais – PR`, M+32, y+16);
-  doc.text('R. Margarida de Araújo Franco, 1164, Sala 06, Bairro Carioca, CEP 83.005-070', M+32, y+22);
-
-  // Box "PEDIDO DE VENDA" canto superior direito
-  const bx = 140, by = y, bw = 56, bh = 20;
+  // Box "PEDIDO DE VENDA" — definir PRIMEIRO para saber espaço disponível
+  const bx = 138, by = y, bw = 58, bh = 22;
   setFG(...GD); doc.roundedRect(bx, by, bw, bh, 2, 2, 'F');
-  bold(12); setG(255,255,255);
+  bold(11); setG(255,255,255);
   doc.text('PEDIDO DE VENDA', bx+bw/2, by+9, {align:'center'});
   normal(8); setG(...GT);
-  doc.text(`Nº ${pvNum}  |  ${p.dataPedido}`, bx+bw/2, by+16, {align:'center'});
+  doc.text(`Nº ${pvNum}`, bx+bw/2, by+15, {align:'center'});
+  doc.text(p.dataPedido, bx+bw/2, by+20, {align:'center'});
+
+  // Nome empresa — limitado ao espaço antes do box (até x=135)
+  const txMax = bx - (M+32) - 2; // largura disponível em mm
+  bold(15); setG(...G);
+  doc.text('MADRIGAL AGRONEGÓCIOS LTDA', M+32, y+8);
+  normal(8); setG(80,80,80);
+  doc.text('CNPJ: 66.014.625/0001-10  |  São José dos Pinhais – PR', M+32, y+14);
+  doc.text('R. Margarida de Araújo Franco, 1164, Sala 06', M+32, y+19);
+  doc.text('Bairro Carioca, CEP 83.005-070', M+32, y+24);
 
   y += 34;
 
