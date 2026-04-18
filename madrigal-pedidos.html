@@ -593,8 +593,9 @@ async function baixarDoFirebase() {
       salvarLocal();
       syncOk = true;
       atualizarIndicadorSync('ok');
+      if (EU) { sessionStorage.setItem('mad_user',JSON.stringify(EU)); localStorage.setItem('mad_session',JSON.stringify(EU)); }
       fecharMo('mo-confirm');
-      toast(`✅ ${nPeds} pedidos, ${nUsers} usuários carregados!`, 'ok');
+      toast(`✅ ${nPeds} pedidos carregados!`, 'ok');
       setTimeout(() => location.reload(), 1200);
     };
     f.appendChild(bo);
@@ -676,12 +677,14 @@ async function init() {
   el('init-loading').style.display='none';
 
   try {
-    const s = sessionStorage.getItem('mad_user');
+    // Tenta sessionStorage primeiro, depois localStorage (fallback iOS Safari)
+    const s = sessionStorage.getItem('mad_user') || localStorage.getItem('mad_session');
     if (s) {
       const u = JSON.parse(s);
       const ex = DB.users.find(x => x.id===u.id && x.ativo);
       if (ex) { EU=ex; mostrarApp(); return; }
       sessionStorage.removeItem('mad_user');
+      localStorage.removeItem('mad_session');
     }
   } catch(e) {}
   show('pg-auth');
@@ -696,7 +699,9 @@ function criarMaster() {
   if (!nome||cpf.length<11||pass.length<6||pass!==pass2) { err.textContent='Preencha todos os campos corretamente.'; show(err); return; }
   const master={id:uid(),nome,cpf,senha:btoa(pass),role:'master',ativo:true,em:now()};
   DB.users.push(master); salvarDB();
-  EU=master; sessionStorage.setItem('mad_user',JSON.stringify(master));
+  EU=master;
+  sessionStorage.setItem('mad_user',JSON.stringify(master));
+  localStorage.setItem('mad_session',JSON.stringify(master));
   hide('pg-auth'); mostrarApp();
 }
 
@@ -705,7 +710,9 @@ function entrar() {
   hide(err);
   const u=DB.users.find(x=>x.cpf===cpf&&x.senha===btoa(pass)&&x.ativo);
   if (!u) { err.textContent='CPF ou senha incorretos.'; show(err); return; }
-  EU=u; sessionStorage.setItem('mad_user',JSON.stringify(u));
+  EU=u;
+  sessionStorage.setItem('mad_user',JSON.stringify(u));
+  localStorage.setItem('mad_session',JSON.stringify(u)); // fallback para iOS
   hide('pg-auth'); mostrarApp();
 }
 function sair() { EU=null; sessionStorage.removeItem('mad_user'); location.reload(); }
