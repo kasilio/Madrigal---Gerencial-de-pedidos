@@ -467,12 +467,18 @@ async function carregarDB() {
     if (remoto) {
       const remPeds = (remoto.pedidos || []).length;
       const locPeds = (DB.pedidos || []).length;
-      console.log(`Firestore: ${remPeds} pedidos | Local: ${locPeds}`);
-      if (remPeds >= locPeds) {
-        // Preservar b64 locais
-        (DB.pedidos || []).forEach(lp => {
-          const rp = (remoto.pedidos || []).find(x => x.id === lp.id);
-          if (rp) {
+      console.log(`Firestore: ${remPeds} pedidos | Local: ${locPeds} pedidos`);
+
+      // SEMPRE usa o Firebase se tiver dados — garante sync em qualquer dispositivo
+      if (remPeds > 0 || (remoto.users||[]).length > 0) {
+        // Preservar arquivos b64 do localStorage local
+        const localPeds = DB.pedidos || [];
+        DB = remoto;
+        garantirDB();
+        // Restaurar b64 que não vieram do Firebase
+        (DB.pedidos || []).forEach(rp => {
+          const lp = localPeds.find(x => x.id === rp.id);
+          if (lp) {
             (lp.arquivos || []).forEach(la => {
               if (la.b64 && la.b64 !== '[arquivo]') {
                 const ra = (rp.arquivos || []).find(x => x.tipo === la.tipo);
@@ -481,15 +487,18 @@ async function carregarDB() {
             });
           }
         });
-        DB = remoto;
-        garantirDB();
         salvarLocal();
-      } else {
+        console.log(`Carregado do Firebase: ${(DB.pedidos||[]).length} pedidos`);
+      } else if (locPeds > 0) {
+        // Local tem dados mas Firebase está vazio — sobe
+        console.log('Firebase vazio, subindo dados locais...');
         await fsSave(DB);
       }
     } else {
-      console.log('Firestore vazio — subindo local');
-      await fsSave(DB);
+      if ((DB.pedidos||[]).length > 0) {
+        console.log('Firebase não tem documento, criando...');
+        await fsSave(DB);
+      }
     }
     syncOk = true;
     atualizarIndicadorSync('ok');
@@ -543,44 +552,57 @@ async function forcarSync() {
 async function baixarDoFirebase() {
   try {
     atualizarIndicadorSync('sync');
-    toast('Buscando dados na nuvem...', 'ok');
+    toast('🔄 Buscando dados na nuvem...', 'ok');
     const remoto = await fsGet();
-    const nPeds  = (remoto?.pedidos  || []).length;
-    const nUsers = (remoto?.users    || []).length;
-    const nClis  = (remoto?.clientes || []).length;
 
-    el('mo-confirm-title').textContent = '☁️ Dados na Nuvem';
+    if (!remoto) {
+      toast('⚠️ Nuvem vazia! Vá ao PC e clique em "Enviar p/ Nuvem" primeiro.', 'err');
+      atualizarIndicadorSync('err');
+      return;
+    }
+
+    const nPeds  = (remoto.pedidos  || []).length;
+    const nUsers = (remoto.users    || []).length;
+    const nClis  = (remoto.clientes || []).length;
+
+    el('mo-confirm-title').textContent = '☁️ Dados encontrados na Nuvem';
     el('mo-confirm-body').innerHTML = `
-      <div style="font-size:.85rem;line-height:2;background:var(--gray);padding:.8rem;border-radius:var(--rr);margin-bottom:.8rem">
+      <div style="font-size:.88rem;line-height:2.2;background:var(--gray);padding:.9rem;border-radius:var(--rr);margin-bottom:.8rem">
         <b>📋 Pedidos:</b> ${nPeds}<br>
         <b>👥 Usuários:</b> ${nUsers}<br>
-        <b>🏢 Clientes:</b> ${nClis}
+        <b>🏢 Clientes:</b> ${nClis}<br>
+        <b>📦 Produtos:</b> ${(remoto.produtos||[]).length}
       </div>
-      ${nPeds > 0 || nUsers > 0
-        ? `<div class="alert alert-s">✅ Clique em Aplicar para carregar os dados.</div>`
-        : `<div class="alert alert-w">⚠️ Nuvem vazia. No PC clique em "Enviar p/ Nuvem" primeiro.</div>`}`;
+      <div class="alert ${nPeds>0?'alert-s':'alert-w'}">
+        ${nPeds>0 ? '✅ Clique em Aplicar para carregar tudo.' : '⚠️ Sem pedidos na nuvem ainda.'}
+      </div>`;
 
     el('mo-confirm-footer').innerHTML = '';
     const f = el('mo-confirm-footer');
+
     const bc = document.createElement('button');
     bc.className = 'btn btn-s'; bc.textContent = 'Fechar';
-    bc.onclick = () => fecharMo('mo-confirm'); f.appendChild(bc);
+    bc.onclick = () => fecharMo('mo-confirm');
+    f.appendChild(bc);
 
-    if (nPeds > 0 || nUsers > 0) {
-      const bo = document.createElement('button');
-      bo.className = 'btn btn-p'; bo.textContent = '✓ Aplicar dados';
-      bo.onclick = () => {
-        DB = remoto; garantirDB(); salvarLocal();
-        syncOk = true; atualizarIndicadorSync('ok');
-        fecharMo('mo-confirm');
-        toast(`✅ ${nPeds} pedidos carregados!`, 'ok');
-        setTimeout(() => location.reload(), 1200);
-      };
-      f.appendChild(bo);
-    }
+    const bo = document.createElement('button');
+    bo.className = 'btn btn-p'; bo.textContent = `✓ Aplicar (${nPeds} pedidos)`;
+    bo.onclick = () => {
+      DB = remoto;
+      garantirDB();
+      salvarLocal();
+      syncOk = true;
+      atualizarIndicadorSync('ok');
+      fecharMo('mo-confirm');
+      toast(`✅ ${nPeds} pedidos, ${nUsers} usuários carregados!`, 'ok');
+      setTimeout(() => location.reload(), 1200);
+    };
+    f.appendChild(bo);
     show('mo-confirm');
+
   } catch(e) {
-    toast('Erro: ' + e.message, 'err');
+    console.error('baixarDoFirebase erro:', e);
+    toast('Erro ao conectar: ' + e.message, 'err');
     atualizarIndicadorSync('err');
   }
 }
