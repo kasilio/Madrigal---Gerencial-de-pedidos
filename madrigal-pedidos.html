@@ -226,6 +226,11 @@ tr:nth-child(even) td{background:var(--gray)}
   .main{padding-bottom:68px}
 }
 
+/* ── SIDEBAR TOGGLES ── */
+.sb-sec-toggle{display:flex;align-items:center;justify-content:space-between;padding:.45rem 1rem .25rem;font-size:.65rem;text-transform:uppercase;letter-spacing:1px;opacity:.7;cursor:pointer;transition:opacity .15s;color:#fff;margin-top:.3rem;user-select:none}
+.sb-sec-toggle:hover{opacity:1}
+.sb-sec-toggle span:last-child{font-size:.55rem;opacity:.8}
+
 /* ── BADGES STATUS NOVO FLUXO ── */
 .ba{background:var(--al);color:var(--a)}   /* ag_aprovacao, ag_pagamento */
 .bb{background:var(--bl);color:var(--b)}   /* ag_assinatura, validar_assinatura */
@@ -295,16 +300,27 @@ tr:nth-child(even) td{background:var(--gray)}
       <div class="nav-i" id="ni-ped" onclick="ir('ped')"><span class="ic">📋</span>Pedidos<span class="nb hide" id="nb-ped"></span></div>
       <div class="nav-i" id="ni-novo" onclick="ir('novo')"><span class="ic">➕</span>Novo Pedido</div>
       <div id="sb-admin" class="hide">
-        <div class="sb-sec">Administração</div>
-        <div class="nav-i" id="ni-prod" onclick="ir('prod')"><span class="ic">📦</span>Produtos</div>
-        <div class="nav-i" id="ni-cli" onclick="ir('cli')"><span class="ic">🏢</span>Clientes</div>
-        <div class="nav-i" id="ni-usr" onclick="ir('usr')"><span class="ic">👥</span>Usuários</div>
-        <div class="nav-i" id="ni-pgto" onclick="ir('pgto')"><span class="ic">💳</span>Formas de Pagamento</div>
-        <div class="sb-sec">Dados & Sync</div>
-        <div class="nav-i" onclick="forcarSync()"><span class="ic">☁️</span>Enviar p/ Nuvem</div>
-        <div class="nav-i" onclick="baixarDoFirebase()"><span class="ic">🔄</span>Baixar da Nuvem</div>
-        <div class="nav-i" onclick="exportarDados()"><span class="ic">⬆️</span>Exportar Backup</div>
-        <div class="nav-i" onclick="importarDados()"><span class="ic">⬇️</span>Importar Backup</div>
+        <!-- CADASTROS -->
+        <div class="sb-sec-toggle" onclick="toggleSbSection('sb-cadastros','ic-cadastros')">
+          <span>Cadastros</span><span id="ic-cadastros" style="transition:transform .2s">▼</span>
+        </div>
+        <div id="sb-cadastros">
+          <div class="nav-i" id="ni-prod" onclick="ir('prod')"><span class="ic">📦</span>Produtos</div>
+          <div class="nav-i" id="ni-cli" onclick="ir('cli')"><span class="ic">🏢</span>Clientes</div>
+          <div class="nav-i" id="ni-usr" onclick="ir('usr')"><span class="ic">👥</span>Usuários</div>
+          <div class="nav-i" id="ni-pgto" onclick="ir('pgto')"><span class="ic">💳</span>Formas de Pagamento</div>
+        </div>
+        <!-- DADOS & SYNC -->
+        <div class="sb-sec-toggle" onclick="toggleSbSection('sb-sync','ic-sync')">
+          <span>Dados & Sync</span><span id="ic-sync" style="transition:transform .2s">▼</span>
+        </div>
+        <div id="sb-sync" class="hide">
+          <div class="nav-i" onclick="exportarExcel()"><span class="ic">📊</span>Exportar Excel</div>
+          <div class="nav-i" onclick="forcarSync()"><span class="ic">☁️</span>Enviar p/ Nuvem</div>
+          <div class="nav-i" onclick="baixarDoFirebase()"><span class="ic">🔄</span>Baixar da Nuvem</div>
+          <div class="nav-i" onclick="exportarDados()"><span class="ic">⬆️</span>Exportar Backup</div>
+          <div class="nav-i" onclick="importarDados()"><span class="ic">⬇️</span>Importar Backup</div>
+        </div>
       </div>
     </div>
     <div class="sb-bot">
@@ -725,6 +741,7 @@ function atualizarBadges() {
 let dFDI='',dFDF='',dFCL='';
 
 function renderDash(c) {
+  el('tb-actions').innerHTML = `<button class="btn btn-s btn-sm" onclick="exportarExcel()">📊 Exportar Excel</button>`;
   // Exclui cancelados do dashboard
   let peds=DB.pedidos.filter(p=>p.status!=='cancelado');
   if(dFCL) peds=peds.filter(p=>p.clienteId===dFCL);
@@ -882,6 +899,7 @@ let fStatus='todos',fFDI='',fFDF='',fFCL='';
 const ALL_STATUS=['todos','ag_aprovacao','ag_assinatura','validar_assinatura','lib_embarque','ag_pagamento','ag_embarque','concluido','reprovado','cancelado'];
 
 function renderPedidos(c) {
+  el('tb-actions').innerHTML = `<button class="btn btn-s btn-sm" onclick="exportarExcel()">📊 Exportar Excel</button>`;
   const isMobile = window.innerWidth <= 768;
   let mine=EU.role==='master'?DB.pedidos:DB.pedidos.filter(p=>p.vendedorId===EU.id);
   if(fStatus!=='todos') mine=mine.filter(p=>p.status===fStatus);
@@ -2116,6 +2134,147 @@ function showLoading(vl){vl?show('loading-ov'):hide('loading-ov');}
 // ═══════════════════════════════════════════════
 // EXPORTAR / IMPORTAR DADOS
 // ═══════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════
+// EXPORTAR EXCEL
+// ═══════════════════════════════════════════════
+async function exportarExcel() {
+  // Carregar SheetJS dinamicamente
+  if (!window.XLSX) {
+    toast('Carregando exportador...', 'ok');
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+
+  // Aplicar filtros do dashboard/pedidos
+  let peds = [...DB.pedidos];
+  if (dFCL) peds = peds.filter(p => p.clienteId === dFCL);
+  if (dFDI) { const d=pd(dFDI); if(d) peds=peds.filter(p=>pd(p.dataPedido)>=d); }
+  if (dFDF) { const d=pd(dFDF); if(d) peds=peds.filter(p=>pd(p.dataPedido)<=d); }
+
+  if (!peds.length) { toast('Nenhum pedido para exportar.','err'); return; }
+
+  // Montar dados
+  const rows = peds.map(p => {
+    const cl = DB.clientes.find(c => c.id === p.clienteId) || {};
+    const ton = (p.itens||[]).reduce((a,i) => a+(parseFloat(i.qtd)||0), 0);
+    const custo = (parseFloat(p.custoPorTon||0)) * ton;
+    const comissao = (parseFloat(p.comissaoPorTon||0)) * ton;
+    const margem = p.valorTotal - custo - comissao;
+    const arqNomes = tipo => (p.arquivos||[]).find(a=>a.tipo===tipo)?.nome || '';
+
+    return {
+      'PV Nº':          `PV-${new Date().getFullYear()}-${String(p.numero).padStart(3,'0')}`,
+      'Data':           p.dataPedido || '',
+      'Status':         statusLabel(p.status),
+      'Vendedor':       p.vendedorNome || '',
+      // Cliente
+      'Cliente':        p.clienteNome || '',
+      'CNPJ Cliente':   cl.cnpj || '',
+      'IE Cliente':     cl.ie || '',
+      'Cidade/UF':      cl.cidade ? `${cl.cidade}/${cl.uf}` : '',
+      // Itens
+      'Produtos':       (p.itens||[]).map(i=>i.nome).join(' | '),
+      'Qtd Total (ton)':ton,
+      // Valores
+      'Valor Total (R$)':       p.valorTotal || 0,
+      'Preço Médio/ton (R$)':  ton > 0 ? +(p.valorTotal/ton).toFixed(2) : 0,
+      // Condições
+      'Frete':          p.frete || '',
+      'Pagamento':      p.formaPgto || '',
+      'Local Coleta':   p.localColeta || '',
+      'Data Coleta':    p.dataColeta || '',
+      'Validade PV':    p.validade || '',
+      // Logística
+      'Prev. Embarque': p.prevEmbarque || '',
+      'Motorista':      p.motorista || '',
+      'Placa 1':        p.placa1 || '',
+      'Placa 2':        p.placa2 || '',
+      'Placa 3':        p.placa3 || '',
+      // Documentos fiscais
+      'NF Fornecedor Nº': p.nfFornecedor || '',
+      'NF Venda Nº':      p.nfVenda || '',
+      'Lote Nº':          p.loteNumero || '',
+      'Arquivo NF Forn.': arqNomes('nf_fornecedor'),
+      'Arquivo NF Venda': arqNomes('nf_venda'),
+      'Arquivo Laudo':    arqNomes('laudo'),
+      'Pedido Assinado':  arqNomes('assinado'),
+      'Comprovante Pgto': arqNomes('comprovante'),
+      // Resultado financeiro
+      'Custo/ton (R$)':       parseFloat(p.custoPorTon||0),
+      'Custo Total (R$)':     +custo.toFixed(2),
+      'Comissão/ton (R$)':    parseFloat(p.comissaoPorTon||0),
+      'Comissão Total (R$)':  +comissao.toFixed(2),
+      'Margem Líquida (R$)':  +margem.toFixed(2),
+      'Margem %':             p.valorTotal > 0 ? +(margem/p.valorTotal*100).toFixed(2) : 0,
+      // Observações
+      'Observações':    p.obs || '',
+    };
+  });
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+
+  // Larguras das colunas
+  const wscols = [
+    {wch:14},{wch:12},{wch:20},{wch:20},
+    {wch:35},{wch:22},{wch:14},{wch:18},
+    {wch:45},{wch:14},
+    {wch:18},{wch:18},
+    {wch:8},{wch:22},{wch:18},{wch:14},{wch:14},
+    {wch:16},{wch:22},{wch:12},{wch:12},{wch:12},
+    {wch:16},{wch:14},{wch:10},
+    {wch:22},{wch:22},{wch:20},{wch:22},{wch:20},
+    {wch:14},{wch:16},{wch:16},{wch:18},{wch:16},{wch:10},
+    {wch:30},
+  ];
+  ws['!cols'] = wscols;
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Pedidos');
+
+  // Aba de resumo
+  const concluidos = peds.filter(p => p.status==='concluido' && (p.custoPorTon||p.comissaoPorTon));
+  if (concluidos.length) {
+    const totVenda = concluidos.reduce((a,p)=>a+(p.valorTotal||0),0);
+    const totCusto = concluidos.reduce((a,p)=>{const t=(p.itens||[]).reduce((b,i)=>b+(parseFloat(i.qtd)||0),0);return a+(parseFloat(p.custoPorTon||0)*t);},0);
+    const totCom   = concluidos.reduce((a,p)=>{const t=(p.itens||[]).reduce((b,i)=>b+(parseFloat(i.qtd)||0),0);return a+(parseFloat(p.comissaoPorTon||0)*t);},0);
+    const totMarg  = totVenda - totCusto - totCom;
+    const resumo = [
+      {'Indicador':'Total Pedidos Exportados','Valor':peds.length},
+      {'Indicador':'Pedidos Concluídos','Valor':concluidos.length},
+      {'Indicador':'Receita Total (R$)','Valor':+totVenda.toFixed(2)},
+      {'Indicador':'Custo Total (R$)','Valor':+totCusto.toFixed(2)},
+      {'Indicador':'Comissões Pagas (R$)','Valor':+totCom.toFixed(2)},
+      {'Indicador':'Margem Líquida (R$)','Valor':+totMarg.toFixed(2)},
+      {'Indicador':'Margem %','Valor':totVenda>0?+(totMarg/totVenda*100).toFixed(2):0},
+    ];
+    const ws2 = XLSX.utils.json_to_sheet(resumo);
+    ws2['!cols'] = [{wch:30},{wch:20}];
+    XLSX.utils.book_append_sheet(wb, ws2, 'Resumo');
+  }
+
+  const data = new Date().toLocaleDateString('pt-BR').replace(/\//g,'-');
+  XLSX.writeFile(wb, `Madrigal-Pedidos-${data}.xlsx`);
+  toast(`✅ Excel gerado com ${peds.length} pedidos!`, 'ok');
+}
+
+function toggleSbSection(sectionId, iconId) {
+  const sec = el(sectionId);
+  const ico = el(iconId);
+  if (!sec) return;
+  const hidden = sec.classList.contains('hide');
+  if (hidden) {
+    sec.classList.remove('hide');
+    if (ico) ico.style.transform = 'rotate(0deg)';
+  } else {
+    sec.classList.add('hide');
+    if (ico) ico.style.transform = 'rotate(-90deg)';
+  }
+}
 
 window.addEventListener('DOMContentLoaded',init);
 
