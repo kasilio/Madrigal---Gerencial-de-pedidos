@@ -366,144 +366,126 @@ tr:nth-child(even) td{background:var(--gray)}
 <script>
 'use strict';
 // ═══════════════════════════════════════════════
-// FIREBASE — sync em tempo real
+// STORAGE — Firebase REST + localStorage
 // ═══════════════════════════════════════════════
 const DB_KEY = 'madrigal_v1';
 const FB_PROJECT = 'madrigal---gestao-de-pedidos';
 const FB_API_KEY = 'AIzaSyAd1Ox3U0FRV__y6tCCSPHmRDGEFV3rIz4';
-
-// Usa REST API do Firestore diretamente — sem SDK, sem CORS, funciona em qualquer lugar
 const FS_URL = `https://firestore.googleapis.com/v1/projects/${FB_PROJECT}/databases/(default)/documents/dados/principal`;
 
 let DB = {};
 let syncOk = false;
 
+// ── localStorage ──
 function salvarLocal() {
   try { localStorage.setItem(DB_KEY, JSON.stringify(DB)); } catch(e) {}
 }
-
 function carregarLocal() {
-  try {
-    const s = localStorage.getItem(DB_KEY);
-    if (s) { DB = JSON.parse(s); return true; }
-  } catch(e) {}
+  try { const s=localStorage.getItem(DB_KEY); if(s){DB=JSON.parse(s);return true;} } catch(e) {}
   return false;
 }
 
-// Converte objeto JS → formato Firestore
+// ── Firestore converters ──
 function toFS(obj) {
-  if (obj === null || obj === undefined) return { nullValue: null };
-  if (typeof obj === 'boolean') return { booleanValue: obj };
-  if (typeof obj === 'number') return Number.isInteger(obj) ? { integerValue: String(obj) } : { doubleValue: obj };
-  if (typeof obj === 'string') return { stringValue: obj };
-  if (Array.isArray(obj)) return { arrayValue: { values: obj.map(toFS) } };
-  if (typeof obj === 'object') {
-    const fields = {};
-    for (const k in obj) fields[k] = toFS(obj[k]);
-    return { mapValue: { fields } };
+  if (obj===null||obj===undefined) return {nullValue:null};
+  if (typeof obj==='boolean') return {booleanValue:obj};
+  if (typeof obj==='number') return Number.isInteger(obj)?{integerValue:String(obj)}:{doubleValue:obj};
+  if (typeof obj==='string') return {stringValue:obj};
+  if (Array.isArray(obj)) return {arrayValue:{values:obj.map(toFS)}};
+  if (typeof obj==='object') {
+    const f={};
+    for(const k in obj) f[k]=toFS(obj[k]);
+    return {mapValue:{fields:f}};
   }
-  return { stringValue: String(obj) };
+  return {stringValue:String(obj)};
 }
-
-// Converte formato Firestore → objeto JS
 function fromFS(val) {
-  if (!val) return null;
-  if ('nullValue' in val) return null;
-  if ('booleanValue' in val) return val.booleanValue;
-  if ('integerValue' in val) return parseInt(val.integerValue);
-  if ('doubleValue' in val) return val.doubleValue;
-  if ('stringValue' in val) return val.stringValue;
-  if ('arrayValue' in val) return (val.arrayValue.values || []).map(fromFS);
-  if ('mapValue' in val) {
-    const obj = {};
-    for (const k in (val.mapValue.fields || {})) obj[k] = fromFS(val.mapValue.fields[k]);
-    return obj;
+  if(!val) return null;
+  if('nullValue' in val) return null;
+  if('booleanValue' in val) return val.booleanValue;
+  if('integerValue' in val) return parseInt(val.integerValue);
+  if('doubleValue' in val) return val.doubleValue;
+  if('stringValue' in val) return val.stringValue;
+  if('arrayValue' in val) return (val.arrayValue.values||[]).map(fromFS);
+  if('mapValue' in val) {
+    const o={};
+    for(const k in (val.mapValue.fields||{})) o[k]=fromFS(val.mapValue.fields[k]);
+    return o;
   }
   return null;
 }
 
+// ── Firestore REST ──
 async function fsGet() {
-  const r = await fetch(`${FS_URL}?key=${FB_API_KEY}`, {
-    headers: { 'Content-Type': 'application/json' }
-  });
-  if (r.status === 404) return null;
-  if (!r.ok) throw new Error('GET HTTP ' + r.status);
+  const r = await fetch(`${FS_URL}?key=${FB_API_KEY}`);
+  if(r.status===404) return null;
+  if(!r.ok) throw new Error('GET '+r.status);
   const doc = await r.json();
-  return fromFS(doc.fields?.db);
+  if(doc.error) throw new Error(doc.error.message);
+  return doc.fields ? fromFS(doc.fields.db) : null;
 }
 
 async function fsSave(dados) {
-  // Remove base64 grandes para não estourar limite 1MB
   const clone = JSON.parse(JSON.stringify(dados));
-  (clone.pedidos || []).forEach(p => {
-    (p.arquivos || []).forEach(a => { if (a.b64 && a.b64.length > 100) a.b64 = '[arquivo]'; });
+  // Remove base64 para não estourar 1MB
+  (clone.pedidos||[]).forEach(p=>{
+    (p.arquivos||[]).forEach(a=>{if(a.b64&&a.b64.length>100)a.b64='[arquivo]';});
   });
-
-  const body = {
-    fields: {
-      db: toFS(clone),
-      updated: { stringValue: new Date().toISOString() }
-    }
-  };
-
+  const body = {fields:{
+    db: toFS(clone),
+    updated: {stringValue: new Date().toISOString()}
+  }};
   const r = await fetch(`${FS_URL}?key=${FB_API_KEY}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)
   });
-  if (!r.ok) {
-    const txt = await r.text();
-    throw new Error('PATCH HTTP ' + r.status + ': ' + txt.slice(0,100));
+  if(!r.ok) {
+    const t=await r.text();
+    throw new Error('PATCH '+r.status+': '+t.slice(0,150));
   }
 }
 
+// ── DB principal ──
 async function carregarDB() {
+  // 1. Sempre começa com localStorage
   carregarLocal();
   garantirDB();
 
+  // 2. Firebase — SEMPRE usa como fonte de verdade
   try {
     atualizarIndicadorSync('sync');
     const remoto = await fsGet();
-    if (remoto) {
-      const remPeds = (remoto.pedidos || []).length;
-      const locPeds = (DB.pedidos || []).length;
-      console.log(`Firestore: ${remPeds} pedidos | Local: ${locPeds} pedidos`);
-
-      // SEMPRE usa o Firebase se tiver dados — garante sync em qualquer dispositivo
-      if (remPeds > 0 || (remoto.users||[]).length > 0) {
-        // Preservar arquivos b64 do localStorage local
-        const localPeds = DB.pedidos || [];
-        DB = remoto;
-        garantirDB();
-        // Restaurar b64 que não vieram do Firebase
-        (DB.pedidos || []).forEach(rp => {
-          const lp = localPeds.find(x => x.id === rp.id);
-          if (lp) {
-            (lp.arquivos || []).forEach(la => {
-              if (la.b64 && la.b64 !== '[arquivo]') {
-                const ra = (rp.arquivos || []).find(x => x.tipo === la.tipo);
-                if (ra) ra.b64 = la.b64;
-              }
-            });
-          }
+    if (remoto && ((remoto.pedidos||[]).length > 0 || (remoto.users||[]).length > 0)) {
+      // Firebase tem dados — usa sempre
+      const b64map = {};
+      (DB.pedidos||[]).forEach(p => {
+        (p.arquivos||[]).forEach(a => {
+          if (a.b64 && a.b64 !== '[arquivo]') b64map[p.id+'_'+a.tipo] = a.b64;
         });
-        salvarLocal();
-        console.log(`Carregado do Firebase: ${(DB.pedidos||[]).length} pedidos`);
-      } else if (locPeds > 0) {
-        // Local tem dados mas Firebase está vazio — sobe
-        console.log('Firebase vazio, subindo dados locais...');
+      });
+      DB = remoto;
+      garantirDB();
+      // Restaura arquivos b64 do local
+      (DB.pedidos||[]).forEach(p => {
+        (p.arquivos||[]).forEach(a => {
+          const k = p.id+'_'+a.tipo;
+          if (b64map[k]) a.b64 = b64map[k];
+        });
+      });
+      salvarLocal();
+      console.log('DB carregado do Firebase: '+( DB.pedidos||[]).length+' pedidos');
+    } else if (!remoto) {
+      // Firebase vazio — sobe o local
+      if ((DB.pedidos||[]).length > 0 || (DB.users||[]).length > 0) {
         await fsSave(DB);
-      }
-    } else {
-      if ((DB.pedidos||[]).length > 0) {
-        console.log('Firebase não tem documento, criando...');
-        await fsSave(DB);
+        console.log('Dados locais enviados para Firebase');
       }
     }
     syncOk = true;
     atualizarIndicadorSync('ok');
   } catch(e) {
-    console.warn('Firestore erro:', e.message);
+    console.warn('Firebase erro:', e.message);
     syncOk = false;
     atualizarIndicadorSync('err');
   }
@@ -513,97 +495,66 @@ async function salvarDB() {
   salvarLocal();
   try {
     await fsSave(DB);
-    syncOk = true;
+    syncOk=true;
     atualizarIndicadorSync('ok');
   } catch(e) {
-    console.warn('Erro save Firestore:', e.message);
-    syncOk = false;
+    console.warn('salvarDB erro:',e.message);
+    syncOk=false;
     atualizarIndicadorSync('err');
   }
 }
 
 function atualizarIndicadorSync(estado) {
-  const el2 = document.getElementById('sync-indicator');
-  if (!el2) return;
-  const map = {
-    ok:   ['☁️ Sincronizado',    'rgba(165,214,167,1)'],
-    sync: ['🔄 Sincronizando...','rgba(255,255,255,.6)'],
-    err:  ['⚠️ Sem sync',        'rgba(255,180,100,1)'],
-  };
-  const [txt, cor] = map[estado] || map.err;
-  el2.textContent = txt;
-  el2.style.color = cor;
+  const e2=document.getElementById('sync-indicator');
+  if(!e2)return;
+  const m={ok:['☁️ Sincronizado','rgba(165,214,167,1)'],sync:['🔄 Sincronizando...','rgba(255,255,255,.6)'],err:['⚠️ Sem sync','rgba(255,180,100,1)']};
+  const [t,c]=m[estado]||m.err;
+  e2.textContent=t; e2.style.color=c;
 }
 
 async function forcarSync() {
   try {
     atualizarIndicadorSync('sync');
-    toast('Enviando para a nuvem...', 'ok');
+    toast('Enviando para a nuvem...','ok');
     await fsSave(DB);
-    syncOk = true;
-    atualizarIndicadorSync('ok');
-    toast('☁️ Sincronizado com sucesso!', 'ok');
-  } catch(e) {
-    toast('Erro: ' + e.message, 'err');
-    atualizarIndicadorSync('err');
-  }
+    syncOk=true; atualizarIndicadorSync('ok');
+    toast('☁️ Sincronizado!','ok');
+  } catch(e) { toast('Erro: '+e.message,'err'); atualizarIndicadorSync('err'); }
 }
 
 async function baixarDoFirebase() {
   try {
     atualizarIndicadorSync('sync');
-    toast('🔄 Buscando dados na nuvem...', 'ok');
+    toast('🔄 Buscando na nuvem...','ok');
     const remoto = await fsGet();
-
-    if (!remoto) {
-      toast('⚠️ Nuvem vazia! Vá ao PC e clique em "Enviar p/ Nuvem" primeiro.', 'err');
-      atualizarIndicadorSync('err');
-      return;
-    }
-
-    const nPeds  = (remoto.pedidos  || []).length;
-    const nUsers = (remoto.users    || []).length;
-    const nClis  = (remoto.clientes || []).length;
-
-    el('mo-confirm-title').textContent = '☁️ Dados encontrados na Nuvem';
-    el('mo-confirm-body').innerHTML = `
+    if(!remoto){toast('⚠️ Nuvem vazia! Envie do PC primeiro.','err');atualizarIndicadorSync('err');return;}
+    const nP=(remoto.pedidos||[]).length;
+    const nU=(remoto.users||[]).length;
+    const nC=(remoto.clientes||[]).length;
+    el('mo-confirm-title').textContent='☁️ Dados na Nuvem';
+    el('mo-confirm-body').innerHTML=`
       <div style="font-size:.88rem;line-height:2.2;background:var(--gray);padding:.9rem;border-radius:var(--rr);margin-bottom:.8rem">
-        <b>📋 Pedidos:</b> ${nPeds}<br>
-        <b>👥 Usuários:</b> ${nUsers}<br>
-        <b>🏢 Clientes:</b> ${nClis}<br>
-        <b>📦 Produtos:</b> ${(remoto.produtos||[]).length}
+        <b>📋 Pedidos:</b> ${nP}<br><b>👥 Usuários:</b> ${nU}<br><b>🏢 Clientes:</b> ${nC}<br><b>📦 Produtos:</b> ${(remoto.produtos||[]).length}
       </div>
-      <div class="alert ${nPeds>0?'alert-s':'alert-w'}">
-        ${nPeds>0 ? '✅ Clique em Aplicar para carregar tudo.' : '⚠️ Sem pedidos na nuvem ainda.'}
-      </div>`;
-
-    el('mo-confirm-footer').innerHTML = '';
-    const f = el('mo-confirm-footer');
-
-    const bc = document.createElement('button');
-    bc.className = 'btn btn-s'; bc.textContent = 'Fechar';
-    bc.onclick = () => fecharMo('mo-confirm');
-    f.appendChild(bc);
-
-    const bo = document.createElement('button');
-    bo.className = 'btn btn-p'; bo.textContent = `✓ Aplicar (${nPeds} pedidos)`;
-    bo.onclick = () => {
-      DB = remoto;
-      garantirDB();
-      salvarLocal();
-      syncOk = true;
-      atualizarIndicadorSync('ok');
-      if (EU) { sessionStorage.setItem('mad_user',JSON.stringify(EU)); localStorage.setItem('mad_session',JSON.stringify(EU)); }
+      <div class="alert ${nP>0?'alert-s':'alert-w'}">${nP>0?'✅ Clique em Aplicar para carregar.':'⚠️ Sem pedidos ainda.'}</div>`;
+    el('mo-confirm-footer').innerHTML='';
+    const f=el('mo-confirm-footer');
+    const bc=document.createElement('button');bc.className='btn btn-s';bc.textContent='Fechar';bc.onclick=()=>fecharMo('mo-confirm');f.appendChild(bc);
+    const bo=document.createElement('button');bo.className='btn btn-p';bo.textContent=`✓ Aplicar (${nP} pedidos)`;
+    bo.onclick=()=>{
+      DB=remoto; garantirDB(); salvarLocal();
+      syncOk=true; atualizarIndicadorSync('ok');
+      // Salvar sessão antes de recarregar
+      try{sessionStorage.setItem('mad_user',JSON.stringify(EU));localStorage.setItem('mad_session',JSON.stringify(EU));}catch(e){}
       fecharMo('mo-confirm');
-      toast(`✅ ${nPeds} pedidos carregados!`, 'ok');
-      setTimeout(() => location.reload(), 1200);
+      toast(`✅ ${nP} pedidos carregados! Recarregando...`,'ok');
+      setTimeout(()=>{ window.location.href = window.location.href; },800);
     };
     f.appendChild(bo);
     show('mo-confirm');
-
   } catch(e) {
-    console.error('baixarDoFirebase erro:', e);
-    toast('Erro ao conectar: ' + e.message, 'err');
+    console.error('baixarDoFirebase:',e);
+    toast('Erro: '+e.message,'err');
     atualizarIndicadorSync('err');
   }
 }
