@@ -640,9 +640,8 @@ function renderDashboard(c){
     <div class="ana-card"><div class="ana-label">Clientes Ativos</div><div class="ana-value">${clList.length}</div><div class="ana-sub">no período</div></div>
     <div class="ana-card"><div class="ana-label">Total Cadastral</div><div class="ana-value">${DB.pedidos.length}</div><div class="ana-sub">todos os pedidos</div></div>
   </div>
-  <div class="card"><div class="card-title">📦 Volume por Produto (toneladas)</div><div class="chart-bar-wrap">${prodList.map(([n,d])=>barTon(n,d,maxProdTon)).join('')||'<p style="color:var(--text-sec);font-size:.85rem">Sem dados.</p>'}</div></div>
-  <div class="card"><div class="card-title">💰 Valor por Produto (R$)</div><div class="chart-bar-wrap">${prodList.map(([n,d])=>barVal(n,d.valor,maxProdVal,'var(--blue)')).join('')||'<p style="color:var(--text-sec);font-size:.85rem">Sem dados.</p>'}</div></div>
-  <div class="card"><div class="card-title">🏢 Ranking de Clientes (R$)</div><div class="chart-bar-wrap">${clList.map(d=>barVal(d.nome,d.valor,maxClVal,'var(--amber)')).join('')||'<p style="color:var(--text-sec);font-size:.85rem">Sem dados.</p>'}</div></div>
+  ${renderGraficoProdutos(prodList,maxProdTon,maxProdVal)}
+  ${renderGraficoClientes(clList,maxClVal)}
   ${renderRankingVendedores(peds)}
   <div class="card"><div class="card-title">Pedidos Recentes</div>
     ${DB.pedidos.slice(-5).reverse().map(p=>`
@@ -656,62 +655,153 @@ function renderDashboard(c){
 }
 
 // ===================== RANKING VENDEDORES =====================
+function renderGraficoProdutos(prodList, maxTon, maxVal){
+  if(!prodList.length) return '';
+  const cores=['#1A5E2A','#185FA5','#BA7517','#5B3A8C','#A32D2D'];
+  const totalTon=prodList.reduce((a,[,d])=>a+d.qtd,0);
+  const totalVal=prodList.reduce((a,[,d])=>a+d.valor,0);
+
+  // Barras lado a lado para cada produto
+  const barras=prodList.map(([nome,d],i)=>{
+    const cor=cores[i%cores.length];
+    const pctT=Math.max(3,Math.round(d.qtd/Math.max(1,maxTon)*100));
+    const pctV=Math.max(3,Math.round(d.valor/Math.max(1,maxVal)*100));
+    const ns=nome.replace(/\s*[–-]\s*Big Bag.*|Sacaria.*/,'').replace('Ureia ','').trim();
+    const porcTon=totalTon>0?(d.qtd/totalTon*100).toFixed(1):'0';
+    const porcVal=totalVal>0?(d.valor/totalVal*100).toFixed(1):'0';
+    return `<div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.8rem 1rem;flex:1;min-width:160px">
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.7rem">
+        <div style="width:10px;height:10px;border-radius:2px;background:${cor};flex-shrink:0"></div>
+        <div style="font-weight:700;font-size:.8rem;line-height:1.3">${ns}</div>
+      </div>
+      <div style="margin-bottom:.6rem">
+        <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--text-sec);margin-bottom:.2rem">
+          <span>Volume</span><span style="font-weight:700;color:${cor}">${d.qtd.toFixed(1)} t <span style="opacity:.6">(${porcTon}%)</span></span>
+        </div>
+        <div style="background:var(--gray-light);border-radius:3px;height:10px">
+          <div style="width:${pctT}%;height:100%;background:${cor};border-radius:3px"></div>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--text-sec);margin-bottom:.2rem">
+          <span>Valor</span><span style="font-weight:700;color:${cor}">${fmtMoney(d.valor)} <span style="opacity:.6">(${porcVal}%)</span></span>
+        </div>
+        <div style="background:var(--gray-light);border-radius:3px;height:10px">
+          <div style="width:${pctV}%;height:100%;background:${cor};opacity:.55;border-radius:3px"></div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<div class="card">
+    <div class="card-title">📦 Produtos Comercializados</div>
+    <div style="display:flex;gap:.7rem;flex-wrap:wrap">${barras}</div>
+    <div style="display:flex;justify-content:flex-end;gap:1.5rem;margin-top:.8rem;padding-top:.6rem;border-top:1px solid var(--border)">
+      <span style="font-size:.75rem;color:var(--text-sec)">Total: <b style="color:var(--text)">${totalTon.toFixed(1)} ton · ${fmtMoney(totalVal)}</b></span>
+    </div>
+  </div>`;
+}
+
+function renderGraficoClientes(clList, maxVal){
+  if(!clList.length) return '';
+  const totalVal=clList.reduce((a,c)=>a+c.valor,0);
+  const cores=['#BA7517','#1A5E2A','#185FA5','#5B3A8C','#A32D2D','#2E7D6B'];
+  // Top 5
+  const top=clList.slice(0,6);
+
+  const linhas=top.map((c,i)=>{
+    const cor=cores[i%cores.length];
+    const pct=Math.max(3,Math.round(c.valor/Math.max(1,maxVal)*100));
+    const porc=totalVal>0?(c.valor/totalVal*100).toFixed(1):'0';
+    const ns=c.nome.length>28?c.nome.substring(0,28)+'…':c.nome;
+    return `<div style="display:grid;align-items:center;gap:.6rem;grid-template-columns:auto 1fr auto;margin-bottom:.55rem">
+      <div style="width:8px;height:8px;border-radius:50%;background:${cor};flex-shrink:0"></div>
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.2rem">
+          <span style="font-size:.78rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px" title="${c.nome}">${ns}</span>
+          <span style="font-size:.72rem;color:${cor};font-weight:700;margin-left:.5rem;white-space:nowrap">${fmtMoney(c.valor)}</span>
+        </div>
+        <div style="background:var(--gray-light);border-radius:3px;height:8px">
+          <div style="width:${pct}%;height:100%;background:${cor};border-radius:3px"></div>
+        </div>
+      </div>
+      <div style="font-size:.68rem;color:var(--text-sec);white-space:nowrap;text-align:right">${porc}%</div>
+    </div>`;
+  }).join('');
+
+  return `<div class="card">
+    <div class="card-title">🏢 Ranking de Clientes</div>
+    ${linhas}
+    ${clList.length>6?`<div style="font-size:.73rem;color:var(--text-sec);margin-top:.4rem">+${clList.length-6} outros</div>`:''}
+    <div style="border-top:1px solid var(--border);margin-top:.7rem;padding-top:.6rem;display:flex;justify-content:flex-end">
+      <span style="font-size:.75rem;color:var(--text-sec)">Total: <b style="color:var(--text)">${fmtMoney(totalVal)}</b></span>
+    </div>
+  </div>`;
+}
+
 function renderRankingVendedores(peds){
   if(!peds.length) return '';
-  // Agrupar por vendedor
   const rv={};
   peds.forEach(p=>{
     const k=p.vendedorId||'sem_vendedor';
-    if(!rv[k]) rv[k]={nome:p.vendedorNome||'Sem vendedor',valor:0,qtd:0,peds:0,conc:0,repr:0};
+    if(!rv[k]) rv[k]={nome:p.vendedorNome||'Sem vendedor',valor:0,qtd:0,peds:0,conc:0};
     rv[k].valor += (p.valorTotal||0);
     rv[k].qtd   += (p.itens||[]).reduce((a,it)=>a+(parseFloat(it.qtd)||0),0);
     rv[k].peds  += 1;
     if(p.status==='concluido') rv[k].conc++;
-    if(p.status==='cancelado') rv[k].repr++;
   });
   const lista=Object.values(rv).sort((a,b)=>b.valor-a.valor);
   if(!lista.length) return '';
   const maxVal=Math.max(1,...lista.map(v=>v.valor));
+  const maxQtd=Math.max(1,...lista.map(v=>v.qtd));
+  const cores=['#1A5E2A','#BA7517','#185FA5','#A32D2D','#5B3A8C'];
 
-  const barras=lista.map(v=>{
-    const pct=Math.max(2,Math.round(v.valor/maxVal*100));
-    const vm=fmtMoney(v.valor);
-    const n=v.nome.length>32?v.nome.substring(0,32)+'…':v.nome;
-    return `<div class="chart-bar-item">
-      <div class="chart-bar-label" title="${v.nome}">${n}</div>
-      <div class="chart-bar-bg">
-        <div class="chart-bar-fill" style="width:${pct}%;background:var(--amber)">
-          ${pct>25?`<span class="chart-bar-val">${vm}</span>`:''}
+  const cards=lista.map((v,i)=>{
+    const pctVal=Math.max(3,Math.round(v.valor/maxVal*100));
+    const pctQtd=Math.max(3,Math.round(v.qtd/maxQtd*100));
+    const cor=cores[i%cores.length];
+    const ini=v.nome.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+    const nm=v.nome.split(' ').slice(0,2).join(' ');
+    return `<div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);padding:1rem;display:flex;flex-direction:column;gap:.7rem">
+      <div style="display:flex;align-items:center;gap:.7rem">
+        <div style="width:38px;height:38px;border-radius:50%;background:${cor};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.82rem;flex-shrink:0">${ini}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${v.nome}">${nm}</div>
+          <div style="font-size:.72rem;color:var(--text-sec)">${v.peds} pedido${v.peds!==1?'s':''} · ${v.conc} concluído${v.conc!==1?'s':''}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div style="font-weight:700;font-size:.92rem;color:${cor};font-family:'DM Mono',monospace">${fmtMoney(v.valor)}</div>
+          <div style="font-size:.7rem;color:var(--text-sec)">${v.qtd.toFixed(1)} ton</div>
         </div>
       </div>
-      ${pct<=25?`<span class="chart-bar-val-out">${vm}</span>`:''}
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--text-sec);margin-bottom:.25rem"><span>Valor</span><span>${fmtMoney(v.valor)}</span></div>
+        <div style="background:var(--gray-light);border-radius:4px;height:8px;overflow:hidden">
+          <div style="width:${pctVal}%;height:100%;background:${cor};border-radius:4px;transition:width .4s ease"></div>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--text-sec);margin-bottom:.25rem"><span>Volume</span><span>${v.qtd.toFixed(1)} ton</span></div>
+        <div style="background:var(--gray-light);border-radius:4px;height:8px;overflow:hidden">
+          <div style="width:${pctQtd}%;height:100%;background:${cor};opacity:.45;border-radius:4px;transition:width .4s ease"></div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem">
+        <div style="background:var(--gray-light);border-radius:var(--radius);padding:.4rem .6rem;text-align:center">
+          <div style="font-size:.65rem;color:var(--text-sec)">Ticket Médio</div>
+          <div style="font-size:.8rem;font-weight:700;color:var(--text)">${v.peds>0?fmtMoney(v.valor/v.peds):'-'}</div>
+        </div>
+        <div style="background:var(--gray-light);border-radius:var(--radius);padding:.4rem .6rem;text-align:center">
+          <div style="font-size:.65rem;color:var(--text-sec)">Taxa Conclusão</div>
+          <div style="font-size:.8rem;font-weight:700;color:var(--green)">${v.peds>0?Math.round(v.conc/v.peds*100)+'%':'-'}</div>
+        </div>
+      </div>
     </div>`;
   }).join('');
 
-  const linhas=lista.map((v,i)=>`
-    <tr>
-      <td style="font-weight:700;color:var(--amber)">${i+1}º</td>
-      <td style="font-weight:600">${v.nome}</td>
-      <td style="text-align:right">${v.peds}</td>
-      <td style="text-align:right">${v.qtd.toFixed(1)} t</td>
-      <td style="text-align:right;font-weight:700">${fmtMoney(v.valor)}</td>
-      <td style="text-align:right">${v.peds>0?fmtMoney(v.valor/v.peds):'-'}</td>
-      <td style="text-align:right;color:var(--green)">${v.conc}</td>
-    </tr>`).join('');
-
   return `<div class="card">
     <div class="card-title">🏆 Ranking de Vendedores</div>
-    <div class="chart-bar-wrap" style="margin-bottom:1rem">${barras}</div>
-    <div class="table-scroll">
-      <table>
-        <thead><tr>
-          <th>#</th><th>Vendedor</th><th style="text-align:right">Pedidos</th>
-          <th style="text-align:right">Volume</th><th style="text-align:right">Valor Total</th>
-          <th style="text-align:right">Ticket Médio</th><th style="text-align:right">Concluídos</th>
-        </tr></thead>
-        <tbody>${linhas}</tbody>
-      </table>
-    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:.8rem">${cards}</div>
   </div>`;
 }
 
