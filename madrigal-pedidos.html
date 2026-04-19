@@ -643,6 +643,7 @@ function renderDashboard(c){
   <div class="card"><div class="card-title">📦 Volume por Produto (toneladas)</div><div class="chart-bar-wrap">${prodList.map(([n,d])=>barTon(n,d,maxProdTon)).join('')||'<p style="color:var(--text-sec);font-size:.85rem">Sem dados.</p>'}</div></div>
   <div class="card"><div class="card-title">💰 Valor por Produto (R$)</div><div class="chart-bar-wrap">${prodList.map(([n,d])=>barVal(n,d.valor,maxProdVal,'var(--blue)')).join('')||'<p style="color:var(--text-sec);font-size:.85rem">Sem dados.</p>'}</div></div>
   <div class="card"><div class="card-title">🏢 Ranking de Clientes (R$)</div><div class="chart-bar-wrap">${clList.map(d=>barVal(d.nome,d.valor,maxClVal,'var(--amber)')).join('')||'<p style="color:var(--text-sec);font-size:.85rem">Sem dados.</p>'}</div></div>
+  ${renderRankingVendedores(peds)}
   <div class="card"><div class="card-title">Pedidos Recentes</div>
     ${DB.pedidos.slice(-5).reverse().map(p=>`
     <div class="pedido-row" onclick="openPedido('${p.id}')" style="grid-template-columns:80px 1fr 155px 115px">
@@ -651,6 +652,66 @@ function renderDashboard(c){
       <span class="status-badge s-${p.status}">${statusLabel(p.status)}</span>
       <span class="pedido-valor">${fmtMoney(p.valorTotal)}</span>
     </div>`).join('')||'<p style="color:var(--text-sec);font-size:.85rem;padding:.5rem 0">Nenhum pedido ainda.</p>'}
+  </div>`;
+}
+
+// ===================== RANKING VENDEDORES =====================
+function renderRankingVendedores(peds){
+  if(!peds.length) return '';
+  // Agrupar por vendedor
+  const rv={};
+  peds.forEach(p=>{
+    const k=p.vendedorId||'sem_vendedor';
+    if(!rv[k]) rv[k]={nome:p.vendedorNome||'Sem vendedor',valor:0,qtd:0,peds:0,conc:0,repr:0};
+    rv[k].valor += (p.valorTotal||0);
+    rv[k].qtd   += (p.itens||[]).reduce((a,it)=>a+(parseFloat(it.qtd)||0),0);
+    rv[k].peds  += 1;
+    if(p.status==='concluido') rv[k].conc++;
+    if(p.status==='cancelado') rv[k].repr++;
+  });
+  const lista=Object.values(rv).sort((a,b)=>b.valor-a.valor);
+  if(!lista.length) return '';
+  const maxVal=Math.max(1,...lista.map(v=>v.valor));
+
+  const barras=lista.map(v=>{
+    const pct=Math.max(2,Math.round(v.valor/maxVal*100));
+    const vm=fmtMoney(v.valor);
+    const n=v.nome.length>32?v.nome.substring(0,32)+'…':v.nome;
+    return `<div class="chart-bar-item">
+      <div class="chart-bar-label" title="${v.nome}">${n}</div>
+      <div class="chart-bar-bg">
+        <div class="chart-bar-fill" style="width:${pct}%;background:var(--amber)">
+          ${pct>25?`<span class="chart-bar-val">${vm}</span>`:''}
+        </div>
+      </div>
+      ${pct<=25?`<span class="chart-bar-val-out">${vm}</span>`:''}
+    </div>`;
+  }).join('');
+
+  const linhas=lista.map((v,i)=>`
+    <tr>
+      <td style="font-weight:700;color:var(--amber)">${i+1}º</td>
+      <td style="font-weight:600">${v.nome}</td>
+      <td style="text-align:right">${v.peds}</td>
+      <td style="text-align:right">${v.qtd.toFixed(1)} t</td>
+      <td style="text-align:right;font-weight:700">${fmtMoney(v.valor)}</td>
+      <td style="text-align:right">${v.peds>0?fmtMoney(v.valor/v.peds):'-'}</td>
+      <td style="text-align:right;color:var(--green)">${v.conc}</td>
+    </tr>`).join('');
+
+  return `<div class="card">
+    <div class="card-title">🏆 Ranking de Vendedores</div>
+    <div class="chart-bar-wrap" style="margin-bottom:1rem">${barras}</div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>#</th><th>Vendedor</th><th style="text-align:right">Pedidos</th>
+          <th style="text-align:right">Volume</th><th style="text-align:right">Valor Total</th>
+          <th style="text-align:right">Ticket Médio</th><th style="text-align:right">Concluídos</th>
+        </tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>
   </div>`;
 }
 
@@ -699,6 +760,7 @@ function renderPedidos(c){
       <span class="pedido-data">${p.dataPedido}</span>
       <span class="pedido-valor">${fmtMoney(p.valorTotal)}</span>
       <span class="status-badge s-${p.status}">${statusLabel(p.status)}</span>
+      <span style="font-size:.72rem;color:var(--text-sec)">👤 ${p.vendedorNome||'-'}</span>
       <div onclick="event.stopPropagation()"><button class="btn btn-secondary btn-sm" onclick="openPedido('${p.id}')">Ver</button></div>
     </div>`).join('')}
   </div>`;
@@ -736,6 +798,7 @@ function renderPedidoCardMob(p){
     </div>
     <div class="pcm-cliente">${(()=>{const cl=DB.clientes.find(c=>c.id===p.clienteId);return cl?.codigo?`<span style="font-family:'DM Mono',monospace;font-size:.72rem;color:var(--green);font-weight:700;background:var(--green-light);padding:.05rem .3rem;border-radius:4px;margin-right:.3rem">${cl.codigo}</span>`:''})()}${p.clienteNome}</div>
     <div class="pcm-item">${(p.itens||[]).map(i=>i.nome).join(', ')}</div>
+    <div style="font-size:.72rem;color:var(--text-sec);margin-bottom:.2rem">👤 ${p.vendedorNome||'-'}</div>
     <div class="pcm-bot">
       <span class="pcm-data">${p.dataPedido}</span>
       <span class="pcm-val">${fmtMoney(p.valorTotal)}</span>
@@ -936,7 +999,10 @@ function openPedido(id){
     </div>`:'';
 
   document.getElementById('modal-pedido-body').innerHTML=`
-    <div class="alert alert-info" style="margin-bottom:1rem">Status: <strong>${statusLabel(p.status)}</strong></div>
+    <div class="alert alert-info" style="margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.4rem">
+      <span>Status: <strong>${statusLabel(p.status)}</strong></span>
+      <span style="font-size:.8rem;opacity:.85">👤 Vendedor: <strong>${p.vendedorNome||'-'}</strong></span>
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
       <div><div class="section-divider" style="margin-top:0">Cliente</div>
         <div style="font-size:.82rem;line-height:1.75">${cl.codigo?`<span style="background:var(--green);color:#fff;border-radius:5px;padding:.1rem .4rem;font-family:'DM Mono',monospace;font-size:.72rem;font-weight:700">${cl.codigo}</span> `:''}<b>${cl.razaoSocial}</b><br>CNPJ: ${cl.cnpj}<br>IE: ${cl.ie||'-'}<br>${cl.endereco||'-'}<br>${cl.cidade}/${cl.uf} — CEP ${cl.cep||'-'}</div>
