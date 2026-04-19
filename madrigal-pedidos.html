@@ -577,11 +577,37 @@ async function baixarDoFirebase() {
 }
 
 function garantirDB() {
+  // Migrar produtos sem código numérico sequencial
+  if (DB.produtos) {
+    let maxCod = 0;
+    DB.produtos.forEach(p => {
+      const n = parseInt(p.codigo);
+      if (!isNaN(n) && n > maxCod) maxCod = n;
+    });
+    // Só migra se algum produto não tem código numérico
+    const semCod = DB.produtos.filter(p => isNaN(parseInt(p.codigo)));
+    semCod.forEach(p => {
+      maxCod++;
+      p.codigo = String(maxCod).padStart(3,'0');
+    });
+  }
   if (!DB.users)    DB.users    = [];
   if (!DB.pedidos)  DB.pedidos  = [];
   if (!DB.clientes) DB.clientes = [];
   if (!DB.produtos) DB.produtos = produtosPadrao();
   if (!DB.pgtos)    DB.pgtos    = ['Antecipado','À vista no carregamento','30 dias','60 dias','A combinar'];
+  // Migrar produtos sem código numérico sequencial
+  const seedCods = {'p1':'001','p2':'002','p3':'003'};
+  let migP = false;
+  DB.produtos.forEach(p => {
+    if (!p.codigo || isNaN(parseInt(p.codigo))) {
+      p.codigo = seedCods[p.id] || null;
+      migP = true;
+    }
+  });
+  // Atribuir sequencial aos que ficaram sem código
+  let mxP = Math.max(0,...DB.produtos.filter(p=>p.codigo&&!isNaN(parseInt(p.codigo))).map(p=>parseInt(p.codigo)));
+  DB.produtos.forEach(p => { if(!p.codigo){mxP++;p.codigo=String(mxP).padStart(3,'0');migP=true;} });
   let m = false;
   const sc = {'cl-agrozacca':'00001','cl-gtfab':'00002','cl-agrofarma':'00003','cl-dourado':'00004'};
   DB.clientes.forEach(c => { if (!c.codigo) { if (sc[c.id]) { c.codigo=sc[c.id]; m=true; } } });
@@ -591,10 +617,16 @@ function garantirDB() {
 }
 function produtosPadrao() {
   return [
-    {id:'p1',codigo:'UPE25',  nome:'Ureia Pecuária (46% N) – Sacaria 25 kg',   ncm:'3102.10.10',ativo:true},
-    {id:'p2',codigo:'UPE1000',nome:'Ureia Pecuária (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',ativo:true},
-    {id:'p3',codigo:'UGR1000',nome:'Ureia Granulada (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',ativo:true},
+    {id:'p1',codigo:'001',nome:'Ureia Pecuária (46% N) – Sacaria 25 kg',   ncm:'3102.10.10',ativo:true},
+    {id:'p2',codigo:'002',nome:'Ureia Pecuária (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',ativo:true},
+    {id:'p3',codigo:'003',nome:'Ureia Granulada (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',ativo:true},
   ];
+}
+
+function proxCodProd() {
+  const nums = DB.produtos.map(p => parseInt(p.codigo)||0).filter(n=>n>0);
+  const max = nums.length > 0 ? Math.max(...nums) : 0;
+  return String(max+1).padStart(3,'0');
 }
 
 // STATUS DEFINITIONS
@@ -805,6 +837,7 @@ function renderDash(c) {
   ${pl.length?`<div class="card"><div class="card-t">📦 Volume por Produto (ton)</div><div class="bar-wrap">${pl.map(([n,d])=>barTon(n,d,mpt)).join('')}</div></div>`:''}
   ${pl.length?`<div class="card"><div class="card-t">💰 Valor por Produto (R$)</div><div class="bar-wrap">${pl.map(([n,d])=>barVal(n,d.val,mpv,'var(--b)')).join('')}</div></div>`:''}
   ${cl.length?`<div class="card"><div class="card-t">🏢 Ranking de Clientes (R$)</div><div class="bar-wrap">${cl.map(d=>barVal(d.nome,d.val,mcv,'var(--a)')).join('')}</div></div>`:''}
+  ${renderPainelVendedores(peds)}
   ${renderPainelResultados(peds)}
   <div class="card"><div class="card-t">Pedidos Recentes</div>
     ${DB.pedidos.filter(p=>p.status!=='cancelado').slice(-5).reverse().map(p=>`
@@ -822,76 +855,169 @@ function renderDash(c) {
 }
 
 // ═══════════════════════════════════════════════
-// PAINEL DE RESULTADOS
+// PAINEL DE VENDEDORES
 // ═══════════════════════════════════════════════
-function renderPainelResultados(peds) {
-  const concluidos=peds.filter(p=>p.status==='concluido'&&(p.custoPorTon||p.comissaoPorTon));
-  if(!concluidos.length) return '';
+function renderPainelVendedores(peds) {
+  if (!peds.length) return '';
 
-  const totalVenda=concluidos.reduce((a,p)=>a+(p.valorTotal||0),0);
-  const totalCusto=concluidos.reduce((a,p)=>{
-    const ton=(p.itens||[]).reduce((b,i)=>b+(parseFloat(i.qtd)||0),0);
-    return a+(parseFloat(p.custoPorTon||0)*ton);
-  },0);
-  const totalCom=concluidos.reduce((a,p)=>{
-    const ton=(p.itens||[]).reduce((b,i)=>b+(parseFloat(i.qtd)||0),0);
-    return a+(parseFloat(p.comissaoPorTon||0)*ton);
-  },0);
-  const totalMargem=totalVenda-totalCusto-totalCom;
-  const pctMargem=totalVenda>0?(totalMargem/totalVenda*100):0;
-  const corMargem=totalMargem>=0?'var(--g)':'var(--r)';
-  const bgMargem=totalMargem>=0?'var(--gl)':'var(--rl)';
-
-  // Ranking comissão por vendedor
-  const porVendedor={};
-  concluidos.forEach(p=>{
-    const ton=(p.itens||[]).reduce((a,i)=>a+(parseFloat(i.qtd)||0),0);
-    const comT=parseFloat(p.comissaoPorTon||0)*ton;
-    if(!porVendedor[p.vendedorNome])porVendedor[p.vendedorNome]={com:0,ped:0,venda:0};
-    porVendedor[p.vendedorNome].com+=comT;
-    porVendedor[p.vendedorNome].ped++;
-    porVendedor[p.vendedorNome].venda+=(p.valorTotal||0);
+  // Agrupa por vendedor
+  const pv = {};
+  peds.forEach(p => {
+    const k = p.vendedorId || 'sem_vendedor';
+    if (!pv[k]) pv[k] = {nome: p.vendedorNome||'Sem vendedor', val:0, qtd:0, peds:0, conc:0};
+    pv[k].val  += (p.valorTotal||0);
+    pv[k].qtd  += (p.itens||[]).reduce((a,i)=>a+(parseFloat(i.qtd)||0),0);
+    pv[k].peds += 1;
+    if (p.status==='concluido') pv[k].conc += 1;
   });
-  const vlist=Object.entries(porVendedor).sort((a,b)=>b[1].com-a[1].com);
-  const maxCom=Math.max(1,...vlist.map(x=>x[1].com));
+
+  const vlist = Object.values(pv).sort((a,b)=>b.val-a.val);
+  if (!vlist.length) return '';
+
+  const maxVal = Math.max(1, ...vlist.map(v=>v.val));
+  const maxQtd = Math.max(1, ...vlist.map(v=>v.qtd));
+
+  function barVend(v, max, cor) {
+    const pct = Math.max(2, Math.round(v.val/max*100));
+    return `<div class="bar-item">
+      <div class="bar-lbl" title="${v.nome}">${v.nome.split(' ')[0]}</div>
+      <div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:${cor}">
+        ${pct>25?`<span class="bar-val">${fm(v.val)}</span>`:''}
+      </div></div>
+      ${pct<=25?`<span class="bar-vout">${fm(v.val)}</span>`:''}
+      <span style="font-size:.68rem;color:var(--ts);margin-left:.3rem;white-space:nowrap">${v.peds} ped · ${v.qtd.toFixed(1)}t</span>
+    </div>`;
+  }
 
   return `<div class="card">
-    <div class="card-t">📊 Painel de Resultados (${concluidos.length} pedido${concluidos.length>1?'s':''} com dados financeiros)</div>
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.6rem;margin-bottom:.9rem">
-      <div style="background:var(--bl);border-radius:var(--rr);padding:.7rem .9rem">
-        <div style="font-size:.66rem;color:var(--b);font-weight:700;text-transform:uppercase;margin-bottom:.2rem">Receita Total</div>
-        <div style="font-weight:700;color:var(--b);font-family:monospace;font-size:.92rem">${fm(totalVenda)}</div>
-      </div>
-      <div style="background:var(--rl);border-radius:var(--rr);padding:.7rem .9rem">
-        <div style="font-size:.66rem;color:var(--r);font-weight:700;text-transform:uppercase;margin-bottom:.2rem">Custo Total</div>
-        <div style="font-weight:700;color:var(--r);font-family:monospace;font-size:.92rem">${fm(totalCusto)}</div>
-      </div>
-      <div style="background:var(--al);border-radius:var(--rr);padding:.7rem .9rem">
-        <div style="font-size:.66rem;color:var(--a);font-weight:700;text-transform:uppercase;margin-bottom:.2rem">Comissões Pagas</div>
-        <div style="font-weight:700;color:var(--a);font-family:monospace;font-size:.92rem">${fm(totalCom)}</div>
-      </div>
-      <div style="background:${bgMargem};border-radius:var(--rr);padding:.7rem .9rem">
-        <div style="font-size:.66rem;color:${corMargem};font-weight:700;text-transform:uppercase;margin-bottom:.2rem">Margem Líquida</div>
-        <div style="font-weight:700;color:${corMargem};font-family:monospace;font-size:.92rem">${fm(totalMargem)}</div>
-        <div style="font-size:.69rem;color:var(--ts)">${pctMargem.toFixed(1)}% sobre receita</div>
-      </div>
+    <div class="card-t">👤 Desempenho por Vendedor</div>
+    <div style="overflow-x:auto;margin-bottom:.8rem">
+      <table style="width:100%;border-collapse:collapse;font-size:.78rem">
+        <thead><tr>
+          <th style="text-align:left;padding:.4rem .6rem;background:var(--g);color:#fff">Vendedor</th>
+          <th style="text-align:right;padding:.4rem .6rem;background:var(--g);color:#fff">Pedidos</th>
+          <th style="text-align:right;padding:.4rem .6rem;background:var(--g);color:#fff">Concluídos</th>
+          <th style="text-align:right;padding:.4rem .6rem;background:var(--g);color:#fff">Volume (ton)</th>
+          <th style="text-align:right;padding:.4rem .6rem;background:var(--g);color:#fff">Valor Total</th>
+          <th style="text-align:right;padding:.4rem .6rem;background:var(--g);color:#fff">Ticket Médio</th>
+        </tr></thead>
+        <tbody>
+          ${vlist.map((v,i)=>`<tr style="background:${i%2===0?'#fff':'var(--gray)'}">
+            <td style="padding:.4rem .6rem;font-weight:600;color:var(--g)">${v.nome}</td>
+            <td style="padding:.4rem .6rem;text-align:right">${v.peds}</td>
+            <td style="padding:.4rem .6rem;text-align:right">${v.conc}</td>
+            <td style="padding:.4rem .6rem;text-align:right">${v.qtd.toFixed(1)} t</td>
+            <td style="padding:.4rem .6rem;text-align:right;font-weight:700">${fm(v.val)}</td>
+            <td style="padding:.4rem .6rem;text-align:right">${fm(v.peds>0?v.val/v.peds:0)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
     </div>
-    ${vlist.length>0?`<div style="font-size:.78rem;font-weight:700;color:var(--ts);text-transform:uppercase;letter-spacing:.4px;margin-bottom:.5rem">Comissão por Vendedor</div>
-    <div class="bar-wrap">${vlist.map(([nome,d])=>{
-      const pct=Math.max(2,Math.round(d.com/maxCom*100));
-      return `<div class="bar-item">
-        <div class="bar-lbl" title="${nome}">${nome.split(' ')[0]}</div>
-        <div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:var(--a)">${pct>25?`<span class="bar-val">${fm(d.com)}</span>`:''}</div></div>
-        ${pct<=25?`<span class="bar-vout">${fm(d.com)}</span>`:''}
-        <span style="font-size:.68rem;color:var(--ts);margin-left:.3rem;white-space:nowrap">${d.ped} ped.</span>
-      </div>`;
-    }).join('')}</div>`:''}
-    <div style="font-size:.72rem;color:var(--ts);margin-top:.4rem;padding-top:.4rem;border-top:1px solid var(--bd)">
-      ℹ️ Apenas pedidos <b>concluídos</b> com custo/comissão lançados são contabilizados aqui.
+    <div class="bar-wrap">
+      ${vlist.map(v=>barVend(v,maxVal,'var(--g)')).join('')}
     </div>
   </div>`;
 }
 
+// ═══════════════════════════════════════════════
+// PAINEL DE RESULTADOS
+// ═══════════════════════════════════════════════
+function renderPainelResultados(peds) {
+  // Pedidos com resultado esperado (a partir de ag_assinatura, com custo lançado)
+  const statusEsperado = ['ag_assinatura','validar_assinatura','lib_embarque','ag_pagamento','ag_embarque'];
+  const esperados = peds.filter(p => statusEsperado.includes(p.status) && (p.custoPorTon||p.comissaoPorTon));
+  // Pedidos concluídos com resultado efetivado
+  const efetivados = peds.filter(p => p.status==='concluido' && (p.custoPorTon||p.comissaoPorTon));
+
+  if (!esperados.length && !efetivados.length) return '';
+
+  function calcTotais(lista) {
+    const venda  = lista.reduce((a,p)=>a+(p.valorTotal||0),0);
+    const custo  = lista.reduce((a,p)=>{const t=(p.itens||[]).reduce((b,i)=>b+(parseFloat(i.qtd)||0),0);return a+(parseFloat(p.custoPorTon||0)*t);},0);
+    const com    = lista.reduce((a,p)=>{const t=(p.itens||[]).reduce((b,i)=>b+(parseFloat(i.qtd)||0),0);return a+(parseFloat(p.comissaoPorTon||0)*t);},0);
+    const margem = venda - custo - com;
+    const pct    = venda>0?(margem/venda*100):0;
+    return {venda,custo,com,margem,pct};
+  }
+
+  function cardValor(titulo,val,cor,sub=''){
+    return `<div style="background:${cor}15;border:1px solid ${cor}30;border-radius:var(--rr);padding:.7rem .9rem">
+      <div style="font-size:.66rem;color:${cor};font-weight:700;text-transform:uppercase;margin-bottom:.2rem">${titulo}</div>
+      <div style="font-weight:700;color:${cor};font-family:monospace;font-size:.92rem">${fm(val)}</div>
+      ${sub?`<div style="font-size:.69rem;color:var(--ts)">${sub}</div>`:''}
+    </div>`;
+  }
+
+  let html = `<div class="card"><div class="card-t">📈 Painel de Resultados</div>`;
+
+  // RESULTADO ESPERADO
+  if (esperados.length) {
+    const e = calcTotais(esperados);
+    html += `
+    <div style="margin-bottom:.8rem">
+      <div style="font-size:.75rem;font-weight:700;color:var(--a);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.5rem;padding-bottom:.3rem;border-bottom:2px solid var(--al)">
+        🔮 Resultado Esperado — ${esperados.length} pedido${esperados.length>1?'s':''} em andamento
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.55rem">
+        ${cardValor('Receita Esperada',e.venda,'#185FA5')}
+        ${cardValor('Custo Estimado',e.custo,'#A32D2D')}
+        ${cardValor('Comissões Estimadas',e.com,'#BA7517')}
+        ${cardValor('Margem Esperada',e.margem,e.margem>=0?'#1A5E2A':'#A32D2D',e.pct.toFixed(1)+'% sobre receita')}
+      </div>
+    </div>`;
+  }
+
+  // RESULTADO EFETIVADO
+  if (efetivados.length) {
+    const ef = calcTotais(efetivados);
+    html += `
+    <div style="margin-bottom:.5rem">
+      <div style="font-size:.75rem;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.5rem;padding-bottom:.3rem;border-bottom:2px solid var(--gm)">
+        ✅ Resultado Efetivado — ${efetivados.length} pedido${efetivados.length>1?'s':''} concluído${efetivados.length>1?'s':''}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.55rem">
+        ${cardValor('Receita Real',ef.venda,'#185FA5')}
+        ${cardValor('Custo Real',ef.custo,'#A32D2D')}
+        ${cardValor('Comissões Pagas',ef.com,'#BA7517')}
+        ${cardValor('Margem Real',ef.margem,ef.margem>=0?'#1A5E2A':'#A32D2D',ef.pct.toFixed(1)+'% sobre receita')}
+      </div>
+    </div>`;
+  }
+
+  // TOTAL COMBINADO se tiver os dois
+  if (esperados.length && efetivados.length) {
+    const todos = [...esperados,...efetivados];
+    const tot = calcTotais(todos);
+    html += `
+    <div style="padding:.6rem .8rem;background:var(--gray);border-radius:var(--rr);display:flex;gap:1.5rem;flex-wrap:wrap;font-size:.8rem">
+      <span>📊 <b>Total geral:</b> Receita ${fm(tot.venda)} | Custo ${fm(tot.custo)} | Comissão ${fm(tot.com)} | <b style="color:${tot.margem>=0?'var(--g)':'var(--r)'}">Margem ${fm(tot.margem)} (${tot.pct.toFixed(1)}%)</b></span>
+    </div>`;
+  }
+
+  // Ranking comissão por vendedor (efetivados)
+  if (efetivados.length) {
+    const pv={};
+    efetivados.forEach(p=>{
+      const t=(p.itens||[]).reduce((a,i)=>a+(parseFloat(i.qtd)||0),0);
+      const ct=parseFloat(p.comissaoPorTon||0)*t;
+      if(!pv[p.vendedorNome])pv[p.vendedorNome]={com:0,ped:0};
+      pv[p.vendedorNome].com+=ct; pv[p.vendedorNome].ped++;
+    });
+    const vl=Object.entries(pv).sort((a,b)=>b[1].com-a[1].com);
+    const mx=Math.max(1,...vl.map(x=>x[1].com));
+    if(vl.length>0){
+      html+=`<div style="margin-top:.8rem"><div style="font-size:.74rem;font-weight:700;color:var(--ts);text-transform:uppercase;letter-spacing:.4px;margin-bottom:.45rem">Comissão Paga por Vendedor (efetivado)</div>
+      <div class="bar-wrap">${vl.map(([n,d])=>{
+        const pct=Math.max(2,Math.round(d.com/mx*100));
+        return `<div class="bar-item"><div class="bar-lbl">${n.split(' ')[0]}</div><div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:var(--a)">${pct>25?`<span class="bar-val">${fm(d.com)}</span>`:''}</div></div>${pct<=25?`<span class="bar-vout">${fm(d.com)}</span>`:''}<span style="font-size:.68rem;color:var(--ts);margin-left:.3rem">${d.ped} ped.</span></div>`;
+      }).join('')}</div></div>`;
+    }
+  }
+
+  html += `<div style="font-size:.71rem;color:var(--ts);margin-top:.6rem;padding-top:.4rem;border-top:1px solid var(--bd)">ℹ️ <b>Esperado:</b> pedidos em andamento com custo/comissão lançados. <b>Efetivado:</b> pedidos concluídos.</div>`;
+  html += `</div>`;
+  return html;
+}
 // ═══════════════════════════════════════════════
 // PEDIDOS
 // ═══════════════════════════════════════════════
@@ -901,11 +1027,13 @@ const ALL_STATUS=['todos','ag_aprovacao','ag_assinatura','validar_assinatura','l
 function renderPedidos(c) {
   el('tb-actions').innerHTML = `<button class="btn btn-s btn-sm" onclick="exportarExcel()">📊 Exportar Excel</button>`;
   const isMobile = window.innerWidth <= 768;
-  let mine=EU.role==='master'?DB.pedidos:DB.pedidos.filter(p=>p.vendedorId===EU.id);
-  if(fStatus!=='todos') mine=mine.filter(p=>p.status===fStatus);
-  if(fFCL) mine=mine.filter(p=>p.clienteId===fFCL);
-  if(fFDI){const d=pd(fFDI);if(d)mine=mine.filter(p=>pd(p.dataPedido)>=d);}
-  if(fFDF){const d=pd(fFDF);if(d)mine=mine.filter(p=>pd(p.dataPedido)<=d);}
+  // mine_all: sem filtro de status (para contar por chip)
+  let mine_all=EU.role==='master'?DB.pedidos:DB.pedidos.filter(p=>p.vendedorId===EU.id);
+  if(fFCL) mine_all=mine_all.filter(p=>p.clienteId===fFCL);
+  if(fFDI){const d=pd(fFDI);if(d)mine_all=mine_all.filter(p=>pd(p.dataPedido)>=d);}
+  if(fFDF){const d=pd(fFDF);if(d)mine_all=mine_all.filter(p=>pd(p.dataPedido)<=d);}
+  // mine: com filtro de status
+  let mine = fStatus==='todos' ? mine_all : mine_all.filter(p=>p.status===fStatus);
 
   c.innerHTML=`
   <div class="filtros-bar" id="filtros-ped" style="${isMobile?'display:none':''}">
@@ -923,7 +1051,11 @@ function renderPedidos(c) {
     <button class="btn btn-s btn-sm" onclick="const f=el('filtros-ped');f.style.display=f.style.display==='none'?'flex':'none'">⚙️ Filtros</button>
     ${fFDI||fFDF||fFCL?`<span style="font-size:.72rem;color:var(--a)">● Filtro ativo</span>`:''}
   </div>`:''}
-  <div class="filters">${ALL_STATUS.map(s=>`<div class="fc ${fStatus===s?'on':''}" onclick="fStatus='${s}';ir('ped')">${s==='todos'?'Todos':statusLabel(s)}</div>`).join('')}</div>
+  <div class="filters">${ALL_STATUS.map(s=>{
+    const cnt = s==='todos' ? mine_all.length : mine_all.filter(p=>p.status===s).length;
+    const label = s==='todos'?'Todos':statusLabel(s);
+    return `<div class="fc ${fStatus===s?'on':''}" onclick="fStatus='${s}';ir('ped')">${label}${cnt>0?` <span style="background:${fStatus===s?'rgba(255,255,255,.3)':'var(--g)'};color:#fff;border-radius:10px;font-size:.62rem;padding:.05rem .35rem;margin-left:.2rem;font-weight:700">${cnt}</span>`:''}</div>`;
+  }).join('')}</div>
   <div id="ped-list">
     ${mine.length===0?'<div class="card" style="text-align:center;color:var(--ts);padding:1.5rem">Nenhum pedido encontrado.</div>':''}
     ${mine.map(p=>`
@@ -938,6 +1070,7 @@ function renderPedidos(c) {
       <div class="pc-top"><span class="pc-num">PV-${p.numero}</span><span class="badge ${badgeCls(p.status)}">${statusLabel(p.status)}</span></div>
       <div class="pc-cli">${p.clienteNome}</div>
       <div class="pc-prod">${(p.itens||[]).map(i=>i.nome).join(', ')}</div>
+      <div style="font-size:.71rem;color:var(--ts);margin-bottom:.2rem">👤 ${p.vendedorNome||'-'}</div>
       <div class="pc-bot"><span class="pc-data">${p.dataPedido}</span><span class="pc-val">${fm(p.valorTotal)}</span></div>
     </div>`).join('')}
   </div>`;
@@ -1027,7 +1160,7 @@ function renderItensNP() {
       <div class="fg" style="margin:0"><label>Produto</label>
         <select onchange="selProd(${i},this.value)">
           <option value="">Selecione</option>
-          ${DB.produtos.filter(p=>p.ativo).map(p=>`<option value="${p.id}" ${it.prodId===p.id?'selected':''}>${p.nome}</option>`).join('')}
+          ${DB.produtos.filter(p=>p.ativo).sort((a,b)=>(parseInt(a.codigo)||0)-(parseInt(b.codigo)||0)).map(p=>`<option value="${p.id}" ${it.prodId===p.id?'selected':''}>[${p.codigo||'---'}] ${p.nome}</option>`).join('')}
         </select>
       </div>
       <div class="fg" style="margin:0"><label>Qtd (ton)</label><input type="number" step="0.01" value="${it.qtd}" onchange="updItem(${i},'qtd',this.value)"></div>
@@ -1219,8 +1352,9 @@ function abrirPedido(id) {
     acaoHTML = `<div class="alert alert-w" style="margin-top:.5rem">Este pedido foi reprovado. Edite e reenvie para aprovação ou aguarde orientação do master.</div>`;
   }
 
-  // ETAPA concluído — Master pode lançar custo e comissão
-  if (p.status==='concluido' && isMaster) {
+  // RESULTADO FINANCEIRO — disponível a partir de ag_assinatura para master
+  const statusComResultado = ['ag_assinatura','validar_assinatura','lib_embarque','ag_pagamento','ag_embarque','concluido'];
+  if (isMaster && statusComResultado.includes(p.status)) {
     const tonTotal=(p.itens||[]).reduce((a,i)=>a+(parseFloat(i.qtd)||0),0);
     const custoTotal=p.custoPorTon?(parseFloat(p.custoPorTon)*tonTotal):0;
     const comissaoTotal=p.comissaoPorTon?(parseFloat(p.comissaoPorTon)*tonTotal):0;
@@ -1246,7 +1380,10 @@ function abrirPedido(id) {
 
   el('mo-ped-title').textContent=`PV-${p.numero} — ${p.clienteNome}`;
   el('mo-ped-body').innerHTML=`
-    <div class="alert alert-i" style="margin-bottom:1rem">Status: <strong>${statusLabel(p.status)}</strong></div>
+    <div class="alert alert-i" style="margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.4rem">
+      <span>Status: <strong>${statusLabel(p.status)}</strong></span>
+      <span style="font-size:.8rem">👤 Vendedor: <strong>${p.vendedorNome||'-'}</strong></span>
+    </div>
     <div class="fr" style="margin-bottom:.8rem">
       <div>
         <div class="sdiv" style="margin-top:0">Cliente</div>
@@ -1279,6 +1416,35 @@ function abrirPedido(id) {
   // Footer botões
   const f=el('mo-ped-footer'); f.innerHTML='';
   const btn=(cls,txt,fn)=>{const b=document.createElement('button');b.className='btn '+cls;b.textContent=txt;b.onclick=fn;f.appendChild(b);};
+
+  // Trocar vendedor (só master)
+  if(isMaster) {
+    const vendedores = DB.users.filter(u=>u.ativo);
+    if(vendedores.length > 1) {
+      const sel = document.createElement('select');
+      sel.style.cssText='padding:.35rem .6rem;font-size:.78rem;border:1px solid var(--bd);border-radius:var(--rr);font-family:inherit;cursor:pointer';
+      sel.title='Trocar vendedor vinculado';
+      vendedores.forEach(u=>{
+        const o=document.createElement('option');
+        o.value=u.id; o.textContent=(u.role==='master'?'👑 ':'👤 ')+u.nome;
+        if(u.id===p.vendedorId) o.selected=true;
+        sel.appendChild(o);
+      });
+      sel.onchange=async()=>{
+        const novoV=DB.users.find(u=>u.id===sel.value);
+        if(!novoV) return;
+        const idx=DB.pedidos.findIndex(x=>x.id===p.id);
+        DB.pedidos[idx].vendedorId=novoV.id;
+        DB.pedidos[idx].vendedorNome=novoV.nome;
+        addHist(p.id,p.status,'Vendedor alterado para: '+novoV.nome,EU.nome);
+        await salvarDB();
+        toast('Vendedor atualizado!','ok');
+        fecharMo('mo-ped');
+        abrirPedido(p.id);
+      };
+      f.appendChild(sel);
+    }
+  }
 
   // Editar
   if(isMaster) btn('btn-s','✏️ Editar',()=>{
@@ -1438,7 +1604,7 @@ function downloadArq(pedId,tipo) {
   toast('Baixando '+arq.nome+'...','ok');
 }
 
-function concluirPed(id) {
+async function concluirPed(id) {
   const nff=el('emb-nff')?.value?.trim();
   const nfv=el('emb-nfv')?.value?.trim();
   const lote=el('emb-lote')?.value?.trim();
@@ -1450,12 +1616,38 @@ function concluirPed(id) {
   if(!p.arquivos?.find(a=>a.tipo==='nf_fornecedor')) erros.push('Arquivo NF Fornecedor');
   if(!p.arquivos?.find(a=>a.tipo==='nf_venda')) erros.push('Arquivo NF Venda');
   if(!p.arquivos?.find(a=>a.tipo==='laudo')) erros.push('Arquivo Laudo');
-  if(erros.length){toast('Faltando: '+erros.join(', '),'err');return;}
+
+  // Verificar se custo e comissão foram lançados (obrigatório para concluir)
+  const custoAtual = el('fin-custo')?.value || p.custoPorTon;
+  const comAtual   = el('fin-com')?.value   || p.comissaoPorTon;
+  if(!parseFloat(custoAtual)) erros.push('Custo de Compra (R$/ton)');
+  if(!parseFloat(comAtual))   erros.push('Comissão do Vendedor (R$/ton)');
+
+  if(erros.length){
+    toast('Faltando: '+erros.join(', '),'err');
+    return;
+  }
+
   const idx=DB.pedidos.findIndex(x=>x.id===id);
-  DB.pedidos[idx].nfFornecedor=nff; DB.pedidos[idx].nfVenda=nfv; DB.pedidos[idx].loteNumero=lote;
+  const custo=parseFloat(custoAtual);
+  const com=parseFloat(comAtual);
+  const ton=(p.itens||[]).reduce((a,i)=>a+(parseFloat(i.qtd)||0),0);
+  const margem=p.valorTotal-(custo*ton)-(com*ton);
+
+  DB.pedidos[idx].nfFornecedor=nff;
+  DB.pedidos[idx].nfVenda=nfv;
+  DB.pedidos[idx].loteNumero=lote;
+  DB.pedidos[idx].custoPorTon=custo;
+  DB.pedidos[idx].comissaoPorTon=com;
+  DB.pedidos[idx].margemLiquida=margem;
   DB.pedidos[idx].status='concluido';
-  addHist(id,'concluido',`Concluído. NF Forn: ${nff} | NF Venda: ${nfv} | Lote: ${lote}`,EU.nome);
-  salvarDB(); fecharMo('mo-ped'); toast('Pedido concluído!','ok'); ir('ped');
+  addHist(id,'concluido',
+    `Concluído. NF Forn: ${nff} | NF Venda: ${nfv} | Lote: ${lote} | Custo: ${fm(custo)}/ton | Comissão: ${fm(com)}/ton | Margem: ${fm(margem)}`,
+    EU.nome);
+  await salvarDB();
+  fecharMo('mo-ped');
+  toast('Pedido concluído!','ok');
+  ir('ped');
 }
 
 // Confirmação Master com senha + motivo
@@ -1840,443 +2032,55 @@ function gerarPDF(id) {
 function renderProdutos(c){
   if(EU.role!=='master'){c.innerHTML='<div class="alert alert-w">Acesso restrito.</div>';return;}
   el('tb-actions').innerHTML=`<button class="btn btn-p btn-sm" onclick="abrirFormProd()">+ Novo produto</button>`;
-  c.innerHTML=`<div class="card"><div class="card-t">Produtos Cadastrados</div><div id="prod-list"></div></div>`;renderProdList();
+  c.innerHTML=`<div class="card"><div class="card-t">Produtos Cadastrados</div><div id="prod-list"></div></div>`;
+  renderProdList();
 }
+
 function renderProdList(){
-  const w=el('prod-list');if(!w)return;
-  w.innerHTML=DB.produtos.map(p=>`<div class="ic-card"><div><div class="ic-name">${p.nome}</div><div class="ic-sub">NCM: ${p.ncm} | Cód: ${p.codigo||'-'}</div></div><span class="badge ${p.ativo?'bg':'br'}">${p.ativo?'Ativo':'Inativo'}</span><button class="btn btn-s btn-sm" onclick="abrirFormProd('${p.id}')">Editar</button><button class="btn btn-d btn-sm" onclick="toggleProd('${p.id}')">${p.ativo?'Desativar':'Ativar'}</button></div>`).join('');
-}
-function abrirFormProd(id=null){
-  const p=id?DB.produtos.find(x=>x.id===id):null;
-  el('mo-form-title').textContent=id?'Editar Produto':'Novo Produto';
-  el('mo-form-body').innerHTML=`<div class="fg"><label>Nome / Descrição</label><input id="fp-nome" value="${p?.nome||''}"></div><div class="fr"><div class="fg"><label>Código</label><input id="fp-cod" value="${p?.codigo||''}"></div><div class="fg"><label>NCM</label><input id="fp-ncm" value="${p?.ncm||'3102.10.10'}"></div></div>`;
-  el('mo-form-footer').innerHTML=`<button class="btn btn-s" onclick="fecharMo('mo-form')">Cancelar</button><button class="btn btn-p" onclick="salvarProd('${id||''}')">Salvar</button>`;
-  show('mo-form');
-}
-function salvarProd(id){
-  const nome=v('fp-nome').trim(),cod=v('fp-cod').trim(),ncm=v('fp-ncm').trim();
-  if(!nome){toast('Informe o nome.','err');return;}
-  if(id){const i=DB.produtos.findIndex(x=>x.id===id);Object.assign(DB.produtos[i],{nome,codigo:cod,ncm});}
-  else DB.produtos.push({id:uid(),nome,codigo:cod,ncm,ativo:true});
-  salvarDB();fecharMo('mo-form');toast('Produto salvo!','ok');renderProdList();
-}
-function toggleProd(id){const i=DB.produtos.findIndex(x=>x.id===id);DB.produtos[i].ativo=!DB.produtos[i].ativo;salvarDB();renderProdList();}
-
-// ═══════════════════════════════════════════════
-// CLIENTES
-// ═══════════════════════════════════════════════
-function renderClientes(c){
-  el('tb-actions').innerHTML=`<button class="btn btn-p btn-sm" onclick="abrirCadCliente()">+ Novo cliente</button>`;
-  c.innerHTML=`<div class="fg" style="max-width:280px;margin-bottom:.7rem"><input type="text" id="cl-q" placeholder="Buscar por nome ou CNPJ..." oninput="renderCliList(this.value)"></div><div id="cli-list"></div>`;
-  renderCliList('');
-}
-function renderCliList(q){
-  const w=el('cli-list');if(!w)return;
-  const lst=DB.clientes.filter(c=>!q||c.razaoSocial.toLowerCase().includes(q.toLowerCase())||c.cnpj.includes(q));
-  w.innerHTML=lst.length===0?'<div class="card" style="text-align:center;color:var(--ts);padding:1.3rem">Nenhum cliente cadastrado.</div>':
-    lst.map(cl=>`<div class="ic-row"><div class="av av-code">${cl.codigo||'?'}</div><div class="ir-info"><div class="ir-name">${cl.razaoSocial}</div><div class="ir-sub">CNPJ: ${cl.cnpj} | ${cl.cidade||'-'}/${cl.uf||'-'}</div></div><button class="btn btn-s btn-sm" onclick="abrirCadCliente('${cl.id}')">Editar</button></div>`).join('');
-}
-function proxCodCli(){const mx=Math.max(0,...DB.clientes.filter(c=>c.codigo).map(c=>parseInt(c.codigo)||0));return String(mx+1).padStart(5,'0');}
-function abrirCadCliente(id=null){
-  const cl=id?DB.clientes.find(c=>c.id===id):null;
-  el('mo-form-title').textContent=id?'Editar Cliente':'Novo Cliente';
-  el('mo-form-body').innerHTML=`
-    ${!id?`<div class="alert alert-i" style="font-size:.79rem;margin-bottom:.7rem">Informe o CNPJ e clique Buscar para preenchimento automático.</div><div style="display:flex;gap:.5rem;margin-bottom:.7rem"><input id="cl-cnpj-b" placeholder="CNPJ (só números)" style="flex:1"><button class="btn btn-s btn-sm" onclick="buscarCNPJ()">Buscar</button></div>`:''}
-    ${id&&cl?.codigo?`<div style="font-size:.77rem;color:var(--ts);padding:.35rem .55rem;background:var(--gray);border-radius:var(--rr);margin-bottom:.7rem">Código: <b style="color:var(--g);font-family:monospace">${cl.codigo}</b></div>`:''}
-    <div class="fg"><label>Razão Social *</label><input id="cl-razao" value="${cl?.razaoSocial||''}"></div>
-    <div class="fr"><div class="fg"><label>CNPJ *</label><input id="cl-cnpj" value="${cl?.cnpj||''}"></div><div class="fg"><label>Insc. Estadual</label><input id="cl-ie" value="${cl?.ie||''}"></div></div>
-    <div class="fg"><label>Endereço</label><input id="cl-end" value="${cl?.endereco||''}"></div>
-    <div class="fr3"><div class="fg"><label>Cidade</label><input id="cl-cid" value="${cl?.cidade||''}"></div><div class="fg"><label>UF</label><input id="cl-uf" value="${cl?.uf||''}"></div><div class="fg"><label>CEP</label><input id="cl-cep" value="${cl?.cep||''}"></div></div>
-    <div id="cl-msg"></div>`;
-  el('mo-form-footer').innerHTML=`<button class="btn btn-s" onclick="fecharMo('mo-form')">Cancelar</button><button class="btn btn-p" onclick="salvarCli('${id||''}')">Salvar</button>`;
-  show('mo-form');
-}
-async function buscarCNPJ(){
-  const cnpj=v('cl-cnpj-b').replace(/\D/g,'');const msg=el('cl-msg');
-  if(cnpj.length!==14){msg.innerHTML='<div class="err">CNPJ inválido.</div>';return;}
-  msg.innerHTML='<div class="alert alert-i">Buscando...</div>';
-  try{const r=await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`);if(!r.ok)throw new Error();const d=await r.json();
-    el('cl-razao').value=d.razao_social||'';el('cl-cnpj').value=cnpj.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/,'$1.$2.$3/$4-$5');
-    el('cl-end').value=`${d.logradouro||''}, ${d.numero||''} ${d.complemento||''}`.trim();el('cl-cid').value=d.municipio||'';el('cl-uf').value=d.uf||'';el('cl-cep').value=d.cep||'';
-    msg.innerHTML='<div class="alert alert-s">Dados encontrados! Revise e salve.</div>';
-  }catch(e){msg.innerHTML='<div class="alert alert-w">Não encontrado. Preencha manualmente.</div>';}
-}
-function salvarCli(id){
-  const razao=v('cl-razao').trim(),cnpj=v('cl-cnpj').trim();
-  if(!razao||!cnpj){toast('Razão social e CNPJ obrigatórios.','err');return;}
-  const data={razaoSocial:razao,cnpj,ie:v('cl-ie'),endereco:v('cl-end'),cidade:v('cl-cid'),uf:v('cl-uf'),cep:v('cl-cep')};
-  if(id){const i=DB.clientes.findIndex(c=>c.id===id);Object.assign(DB.clientes[i],data);}
-  else DB.clientes.push({id:uid(),codigo:proxCodCli(),...data});
-  salvarDB();fecharMo('mo-form');toast('Cliente salvo!','ok');
-  if(el('np-cod'))renderNovoPed(el('content'));else renderCliList(el('cl-q')?.value||'');
-}
-
-// ═══════════════════════════════════════════════
-// FORMAS DE PAGAMENTO
-// ═══════════════════════════════════════════════
-function renderPgto(c) {
-  if (EU.role !== 'master') { c.innerHTML='<div class="alert alert-w">Acesso restrito.</div>'; return; }
-  el('tb-actions').innerHTML = `<button class="btn btn-p btn-sm" onclick="abrirFormPgto()">+ Nova forma</button>`;
-  c.innerHTML = `<div class="card"><div class="card-t">Formas de Pagamento</div><div id="pgto-list"></div></div>`;
-  renderPgtoList();
-}
-
-function renderPgtoList() {
-  const w = el('pgto-list'); if (!w) return;
-  if (!DB.pgtos || !DB.pgtos.length) {
-    w.innerHTML = '<div style="color:var(--ts);font-size:.83rem;padding:.5rem 0">Nenhuma forma cadastrada.</div>';
-    return;
-  }
-  w.innerHTML = DB.pgtos.map((p, i) => `
-    <div class="ic-row">
-      <div class="ic" style="font-size:1.1rem">💳</div>
-      <div class="ir-info"><div class="ir-name">${p}</div></div>
-      <button class="btn btn-s btn-sm" onclick="abrirFormPgto(${i})">Editar</button>
-      <button class="btn btn-d btn-sm" onclick="excluirPgto(${i})">Excluir</button>
+  const w=el('prod-list'); if(!w) return;
+  const sorted=[...DB.produtos].sort((a,b)=>(parseInt(a.codigo)||0)-(parseInt(b.codigo)||0));
+  if(!sorted.length){w.innerHTML='<div style="color:var(--ts);font-size:.83rem;padding:.5rem">Nenhum produto.</div>';return;}
+  w.innerHTML=sorted.map(p=>`
+    <div class="ic-card">
+      <div style="display:flex;align-items:center;gap:.6rem;min-width:0;flex:1">
+        <div style="background:var(--g);color:#fff;font-family:monospace;font-size:.75rem;font-weight:700;padding:.2rem .5rem;border-radius:5px;flex-shrink:0">${p.codigo||'---'}</div>
+        <div style="min-width:0"><div class="ic-name">${p.nome}</div><div class="ic-sub">NCM: ${p.ncm||'-'}</div></div>
+      </div>
+      <span class="badge ${p.ativo?'bg':'br'}">${p.ativo?'Ativo':'Inativo'}</span>
+      <button class="btn btn-s btn-sm" onclick="abrirFormProd('${p.id}')">Editar</button>
+      <button class="btn btn-d btn-sm" onclick="toggleProd('${p.id}')">${p.ativo?'Desativar':'Ativar'}</button>
     </div>`).join('');
 }
 
-function abrirFormPgto(idx = null) {
-  const atual = idx !== null ? DB.pgtos[idx] : '';
-  el('mo-form-title').textContent = idx !== null ? 'Editar Forma de Pagamento' : 'Nova Forma de Pagamento';
-  el('mo-form-body').innerHTML = `
-    <div class="fg">
-      <label>Descrição *</label>
-      <input id="pgto-nome" value="${atual}" placeholder="Ex: 30 dias, Boleto, PIX à vista...">
-    </div>`;
-  el('mo-form-footer').innerHTML = `
-    <button class="btn btn-s" onclick="fecharMo('mo-form')">Cancelar</button>
-    <button class="btn btn-p" onclick="salvarPgto(${idx})">Salvar</button>`;
+function abrirFormProd(id=null){
+  const p=id?DB.produtos.find(x=>x.id===id):null;
+  const proxCod=proxCodProd();
+  el('mo-form-title').textContent=id?'Editar Produto':'Novo Produto';
+  el('mo-form-body').innerHTML=`
+    <div class="fr">
+      <div class="fg" style="max-width:110px">
+        <label>Código</label>
+        <input id="fp-cod" value="${p?.codigo||proxCod}" placeholder="${proxCod}" style="font-family:monospace;font-weight:700;font-size:1rem">
+      </div>
+      <div class="fg"><label>NCM</label><input id="fp-ncm" value="${p?.ncm||'3102.10.10'}"></div>
+    </div>
+    <div class="fg"><label>Nome / Descrição *</label><input id="fp-nome" value="${p?.nome||''}" placeholder="Ex: Ureia Pecuária (46% N) – Big Bag 1.000 kg"></div>`;
+  el('mo-form-footer').innerHTML=`<button class="btn btn-s" onclick="fecharMo('mo-form')">Cancelar</button><button class="btn btn-p" onclick="salvarProd('${id||''}')">Salvar</button>`;
   show('mo-form');
-  setTimeout(() => el('pgto-nome')?.focus(), 80);
+  setTimeout(()=>el('fp-nome')?.focus(),80);
 }
 
-async function salvarPgto(idx) {
-  const nome = v('pgto-nome').trim();
-  if (!nome) { toast('Informe a descrição.', 'err'); return; }
-  if (idx !== null && idx !== undefined && idx !== 'null') {
-    DB.pgtos[idx] = nome;
-  } else {
-    if (DB.pgtos.includes(nome)) { toast('Forma já cadastrada.', 'err'); return; }
-    DB.pgtos.push(nome);
-  }
-  await salvarDB();
-  fecharMo('mo-form');
-  toast('Forma de pagamento salva!', 'ok');
-  renderPgtoList();
+async function salvarProd(id){
+  const nome=v('fp-nome').trim(), cod=v('fp-cod').trim(), ncm=v('fp-ncm').trim();
+  if(!nome){toast('Informe o nome.','err');return;}
+  if(!cod){toast('Informe o código.','err');return;}
+  const dup=DB.produtos.find(p=>p.codigo===cod&&p.id!==id);
+  if(dup){toast('Código '+cod+' já usado por: '+dup.nome,'err');return;}
+  if(id){const i=DB.produtos.findIndex(x=>x.id===id);Object.assign(DB.produtos[i],{nome,codigo:cod,ncm});}
+  else DB.produtos.push({id:uid(),nome,codigo:cod,ncm,ativo:true});
+  await salvarDB(); fecharMo('mo-form'); toast('Produto salvo!','ok'); renderProdList();
 }
 
-function excluirPgto(idx) {
-  const nome = DB.pgtos[idx];
-  // Verificar se está em uso em algum pedido
-  const emUso = DB.pedidos.filter(p => p.formaPgto === nome).length;
-  el('mo-confirm-title').textContent = '🗑 Excluir Forma de Pagamento';
-  el('mo-confirm-body').innerHTML = `
-    <div class="alert ${emUso > 0 ? 'alert-w' : 'alert-d'}" style="margin-bottom:.8rem">
-      ${emUso > 0
-        ? `⚠️ Esta forma está em uso em <b>${emUso} pedido(s)</b>. Os pedidos existentes não serão afetados, mas ela não aparecerá mais como opção.`
-        : `Tem certeza que deseja excluir <b>${nome}</b>?`}
-    </div>`;
-  el('mo-confirm-footer').innerHTML = '';
-  const f = el('mo-confirm-footer');
-  const bc = document.createElement('button'); bc.className='btn btn-s'; bc.textContent='Cancelar'; bc.onclick=()=>fecharMo('mo-confirm'); f.appendChild(bc);
-  const bo = document.createElement('button'); bo.className='btn btn-d'; bo.textContent='Excluir';
-  bo.onclick = async () => {
-    DB.pgtos.splice(idx, 1);
-    await salvarDB();
-    fecharMo('mo-confirm');
-    toast('Forma excluída.', 'ok');
-    renderPgtoList();
-  };
-  f.appendChild(bo);
-  show('mo-confirm');
-}
-
-// ═══════════════════════════════════════════════
-// USUÁRIOS
-// ═══════════════════════════════════════════════
-function renderUsuarios(c){
-  if(EU.role!=='master'){c.innerHTML='<div class="alert alert-w">Acesso restrito.</div>';return;}
-  el('tb-actions').innerHTML=`<button class="btn btn-p btn-sm" onclick="abrirFormUsr()">+ Novo usuário</button>`;
-  c.innerHTML=`<div class="card"><div class="card-t">Usuários</div><div id="usr-list"></div></div>`;renderUsrList();
-}
-function renderUsrList(){
-  const w=el('usr-list');if(!w)return;
-  w.innerHTML=DB.users.map(u=>`<div class="ic-row"><div class="av">${u.nome.charAt(0).toUpperCase()}</div><div class="ir-info"><div class="ir-name">${u.nome}</div><div class="ir-sub">CPF: ${maskCPF(u.cpf)} | ${u.role==='master'?'👑 Master':'👤 Vendedor'}</div></div><span class="badge ${u.ativo?'bg':'br'}">${u.ativo?'Ativo':'Inativo'}</span>${u.id!==EU.id?`<button class="btn btn-s btn-sm" onclick="abrirFormUsr('${u.id}')">Editar</button><button class="btn btn-d btn-sm" onclick="toggleUsr('${u.id}')">${u.ativo?'Desativar':'Ativar'}</button>`:'<span style="font-size:.72rem;color:var(--ts)">(você)</span>'}</div>`).join('');
-}
-function abrirFormUsr(id=null){
-  const u=id?DB.users.find(x=>x.id===id):null;
-  el('mo-form-title').textContent=id?'Editar Usuário':'Novo Usuário';
-  el('mo-form-body').innerHTML=`<div class="fg"><label>Nome</label><input id="u-nome" value="${u?.nome||''}"></div><div class="fg"><label>CPF</label><input id="u-cpf" value="${u?maskCPF(u.cpf):''}"></div>${!id?'<div class="fg"><label>Senha</label><input id="u-pass" type="password"></div>':''}<div class="fg"><label>Perfil</label><select id="u-role"><option value="vendedor" ${u?.role==='vendedor'?'selected':''}>Vendedor</option><option value="master" ${u?.role==='master'?'selected':''}>Master</option></select></div>`;
-  el('mo-form-footer').innerHTML=`<button class="btn btn-s" onclick="fecharMo('mo-form')">Cancelar</button><button class="btn btn-p" onclick="salvarUsr('${id||''}')">Salvar</button>`;
-  show('mo-form');
-}
-function salvarUsr(id){
-  const nome=v('u-nome').trim(),cpf=v('u-cpf').replace(/\D/g,''),role=v('u-role');
-  if(!nome||cpf.length<11){toast('Nome e CPF obrigatórios.','err');return;}
-  if(id){const i=DB.users.findIndex(u=>u.id===id);Object.assign(DB.users[i],{nome,cpf,role});}
-  else{const pass=v('u-pass');if(pass.length<6){toast('Senha mínima 6 caracteres.','err');return;}if(DB.users.find(u=>u.cpf===cpf)){toast('CPF já cadastrado.','err');return;}DB.users.push({id:uid(),nome,cpf,senha:btoa(pass),role,ativo:true,em:now()});}
-  salvarDB();fecharMo('mo-form');toast('Usuário salvo!','ok');renderUsrList();
-}
-function toggleUsr(id){const i=DB.users.findIndex(u=>u.id===id);DB.users[i].ativo=!DB.users[i].ativo;salvarDB();renderUsrList();}
-
-// ═══════════════════════════════════════════════
-// SEED HISTÓRICO
-// ═══════════════════════════════════════════════
-function seedHistorico(){
-  const cls=[
-    {id:'cl-agrozacca',codigo:'00001',razaoSocial:'Agrozacca Alimentos LTDA',cnpj:'02.677.998/0001-99',ie:'253.679.397',endereco:'Rodovia Estadual SC 108 KM 437, Ultimo Rio',cidade:'Jacinto Machado',uf:'SC',cep:'88.950-000'},
-    {id:'cl-gtfab',codigo:'00002',razaoSocial:'GT FAB. COM. REP. COM. E SERV. AGRÍCOLAS LTDA',cnpj:'06.203.812/0001-10',ie:'',endereco:'',cidade:'',uf:'',cep:''},
-    {id:'cl-agrofarma',codigo:'00003',razaoSocial:'AGROFARMA – Produtos Alimentícios para Animais LTDA',cnpj:'38.383.052/0001-67',ie:'90860654-09',endereco:'Estrada da Pedra, 580 – Zona Rural',cidade:'São Jorge do Patrocínio',uf:'PR',cep:'87555-000'},
-    {id:'cl-dourado',codigo:'00004',razaoSocial:'COMERCIAL AGROPECUÁRIA DOURADO LTDA',cnpj:'73.253.908/0001-80',ie:'039/0070858',endereco:'Linha Dois A, Seção Paiol Grande, Linha Rio Poço, nº 4500, Cx. Postal 164',cidade:'Erechim',uf:'RS',cep:'99700-976'},
-  ];
-  const mv=EU.id,mn=EU.nome,ds=dStr();
-  const peds=[
-    {id:'pv-001',numero:'001',clienteId:'cl-agrozacca',clienteNome:'Agrozacca Alimentos LTDA',itens:[{prodId:'p1',nome:'Ureia Pecuária (46% N) – Sacaria 25 kg',ncm:'3102.10.10',qtd:'14',preco:'4650'}],valorTotal:65100,frete:'FOB',formaPgto:'Antecipado',dataColeta:'02/04/2026',localColeta:'Araucária – PR',validade:'07/04/2026',obs:'',status:'lib_embarque',vendedorId:mv,vendedorNome:mn,dataPedido:'31/03/2026',historico:[{status:'lib_embarque',nota:'Importado.',usuario:mn,data:ds}],arquivos:[],nfFornecedor:'',nfVenda:'',loteNumero:'',prevEmbarque:'',placa1:'',placa2:'',placa3:'',motorista:''},
-    {id:'pv-002',numero:'002',clienteId:'cl-gtfab',clienteNome:'GT FAB. COM. REP. COM. E SERV. AGRÍCOLAS LTDA',itens:[{prodId:'p3',nome:'Ureia Granulada (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',qtd:'150',preco:'4250'}],valorTotal:637500,frete:'FOB',formaPgto:'À vista no carregamento',dataColeta:'Entre 13/04 e 17/04/2026',localColeta:'Araucária – PR',validade:'17/04/2026',obs:'',status:'lib_embarque',vendedorId:mv,vendedorNome:mn,dataPedido:'08/04/2026',historico:[{status:'lib_embarque',nota:'Importado.',usuario:mn,data:ds}],arquivos:[],nfFornecedor:'',nfVenda:'',loteNumero:'',prevEmbarque:'',placa1:'',placa2:'',placa3:'',motorista:''},
-    {id:'pv-003',numero:'003',clienteId:'cl-agrofarma',clienteNome:'AGROFARMA – Produtos Alimentícios para Animais LTDA',itens:[{prodId:'p2',nome:'Ureia Pecuária (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',qtd:'5',preco:'4350'}],valorTotal:21750,frete:'FOB',formaPgto:'À vista no carregamento',dataColeta:'14/04/2026',localColeta:'Araucária – PR',validade:'14/04/2026',obs:'',status:'lib_embarque',vendedorId:mv,vendedorNome:mn,dataPedido:'08/04/2026',historico:[{status:'lib_embarque',nota:'Importado.',usuario:mn,data:ds}],arquivos:[],nfFornecedor:'',nfVenda:'',loteNumero:'',prevEmbarque:'',placa1:'',placa2:'',placa3:'',motorista:''},
-    {id:'pv-004',numero:'004',clienteId:'cl-dourado',clienteNome:'COMERCIAL AGROPECUÁRIA DOURADO LTDA',itens:[{prodId:'p2',nome:'Ureia Pecuária (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',qtd:'15',preco:'4200'}],valorTotal:63000,frete:'FOB',formaPgto:'À vista no carregamento',dataColeta:'A combinar',localColeta:'Araucária – PR',validade:'21/04/2026',obs:'',status:'lib_embarque',vendedorId:mv,vendedorNome:mn,dataPedido:'14/04/2026',historico:[{status:'lib_embarque',nota:'Importado.',usuario:mn,data:ds}],arquivos:[],nfFornecedor:'',nfVenda:'',loteNumero:'',prevEmbarque:'',placa1:'',placa2:'',placa3:'',motorista:''},
-  ];
-  let ch=false;
-  cls.forEach(c=>{if(!DB.clientes.find(x=>x.id===c.id)){DB.clientes.push(c);ch=true;}});
-  peds.forEach(p=>{if(!DB.pedidos.find(x=>x.id===p.id)){DB.pedidos.push(p);ch=true;}});
-  if(ch){salvarDB();toast('Pedidos históricos importados!','ok');ir('dash');}
-  else toast('Já existem.','ok');
-}
-
-// ═══════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════
-// ── RESULTADO FINANCEIRO ──
-function previewMargemHTML(p) {
-  const custo=parseFloat(el('fin-custo')?.value||p.custoPorTon||0);
-  const com=parseFloat(el('fin-com')?.value||p.comissaoPorTon||0);
-  const ton=(p.itens||[]).reduce((a,i)=>a+(parseFloat(i.qtd)||0),0);
-  if(!custo&&!com) return '';
-  const custoT=custo*ton;
-  const comT=com*ton;
-  const margem=p.valorTotal-custoT-comT;
-  const pct=p.valorTotal>0?(margem/p.valorTotal*100):0;
-  const cor=margem>=0?'var(--g)':'var(--r)';
-  return `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.55rem;margin-top:.5rem">
-    <div style="background:var(--rl);border-radius:var(--rr);padding:.6rem .8rem">
-      <div style="font-size:.67rem;color:var(--r);font-weight:700;text-transform:uppercase;margin-bottom:.2rem">Custo Total</div>
-      <div style="font-weight:700;color:var(--r);font-family:monospace;font-size:.95rem">${fm(custoT)}</div>
-      <div style="font-size:.68rem;color:var(--ts)">${fm(custo)}/ton × ${ton}t</div>
-    </div>
-    <div style="background:var(--al);border-radius:var(--rr);padding:.6rem .8rem">
-      <div style="font-size:.67rem;color:var(--a);font-weight:700;text-transform:uppercase;margin-bottom:.2rem">Comissão Total</div>
-      <div style="font-weight:700;color:var(--a);font-family:monospace;font-size:.95rem">${fm(comT)}</div>
-      <div style="font-size:.68rem;color:var(--ts)">${fm(com)}/ton × ${ton}t</div>
-    </div>
-    <div style="background:${margem>=0?'var(--gl)':'var(--rl)'};border-radius:var(--rr);padding:.6rem .8rem">
-      <div style="font-size:.67rem;color:${cor};font-weight:700;text-transform:uppercase;margin-bottom:.2rem">Margem Líquida</div>
-      <div style="font-weight:700;color:${cor};font-family:monospace;font-size:.95rem">${fm(margem)}</div>
-      <div style="font-size:.68rem;color:var(--ts)">${pct.toFixed(1)}% sobre vendas</div>
-    </div>
-  </div>`;
-}
-
-function previewMargem(pedId) {
-  const p=DB.pedidos.find(x=>x.id===pedId);
-  const div=el('fin-preview'); if(!div||!p) return;
-  div.innerHTML=previewMargemHTML(p);
-}
-
-function salvarResultado(pedId) {
-  const custo=parseFloat(el('fin-custo')?.value||0);
-  const com=parseFloat(el('fin-com')?.value||0);
-  if(!custo&&!com){toast('Informe ao menos o custo ou a comissão.','err');return;}
-  const idx=DB.pedidos.findIndex(p=>p.id===pedId);
-  DB.pedidos[idx].custoPorTon=custo||0;
-  DB.pedidos[idx].comissaoPorTon=com||0;
-  const ton=(DB.pedidos[idx].itens||[]).reduce((a,i)=>a+(parseFloat(i.qtd)||0),0);
-  const margem=DB.pedidos[idx].valorTotal-(custo*ton)-(com*ton);
-  DB.pedidos[idx].margemLiquida=margem;
-  addHist(pedId,'concluido',`Resultado lançado — Custo: ${fm(custo)}/ton | Comissão: ${fm(com)}/ton | Margem: ${fm(margem)}`,EU.nome);
-  salvarDB(); toast('Resultado financeiro salvo!','ok'); fecharMo('mo-ped'); abrirPedido(pedId);
-}
-
-function mascaraData(input) {
-  let v = input.value.replace(/\D/g,'');
-  if (v.length >= 3 && v.length < 5) v = v.slice(0,2)+'/'+v.slice(2);
-  else if (v.length >= 5) v = v.slice(0,2)+'/'+v.slice(2,4)+'/'+v.slice(4,8);
-  input.value = v;
-}
-
-function syncDataPick(txtId, pickId) {
-  const pick = el(pickId);
-  const txt  = el(txtId);
-  if (!pick || !txt || !pick.value) return;
-  const [y,m,d] = pick.value.split('-');
-  txt.value = d+'/'+m+'/'+y;
-}
-
-function fm(v){return'R$ '+Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
-function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
-function now(){return new Date().toLocaleString('pt-BR');}
-function dStr(){return new Date().toLocaleDateString('pt-BR');}
-function dStr10(){
-  const d=new Date();d.setDate(d.getDate()+10);
-  return d.toLocaleDateString('pt-BR');
-}
-function pd(s){if(!s)return null;if(s.includes('/')){const[d,m,y]=s.split('/');return new Date(y,m-1,d);}if(s.includes('-')&&s.length===10){const[y,m,d]=s.split('-');return new Date(y,m-1,d);}return null;}
-function addHist(pedId,st,nota,usr){const i=DB.pedidos.findIndex(p=>p.id===pedId);addHistObj(DB.pedidos[i],st,nota,usr);}
-function addHistObj(ped,st,nota,usr){if(!ped.historico)ped.historico=[];ped.historico.push({status:st,nota,usuario:usr,data:now()});}
-function el(id){return document.getElementById(id);}
-function v(id){return(el(id)||{}).value||'';}
-function show(e){const x=typeof e==='string'?el(e):e;if(x)x.classList.remove('hide');}
-function hide(e){const x=typeof e==='string'?el(e):e;if(x)x.classList.add('hide');}
-function fecharMo(id){hide(id);}
-function toast(msg,tipo='ok'){const w=el('toast-w');const t=document.createElement('div');t.className='toast '+(tipo==='ok'?'tok':'terr');t.textContent=msg;w.appendChild(t);setTimeout(()=>t.remove(),3500);}
-function showLoading(vl){vl?show('loading-ov'):hide('loading-ov');}
-
-// ═══════════════════════════════════════════════
-// EXPORTAR / IMPORTAR DADOS
-// ═══════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════
-// EXPORTAR EXCEL
-// ═══════════════════════════════════════════════
-async function exportarExcel() {
-  // Carregar SheetJS dinamicamente
-  if (!window.XLSX) {
-    toast('Carregando exportador...', 'ok');
-    await new Promise((res, rej) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-      s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
-  }
-
-  // Aplicar filtros do dashboard/pedidos
-  let peds = [...DB.pedidos];
-  if (dFCL) peds = peds.filter(p => p.clienteId === dFCL);
-  if (dFDI) { const d=pd(dFDI); if(d) peds=peds.filter(p=>pd(p.dataPedido)>=d); }
-  if (dFDF) { const d=pd(dFDF); if(d) peds=peds.filter(p=>pd(p.dataPedido)<=d); }
-
-  if (!peds.length) { toast('Nenhum pedido para exportar.','err'); return; }
-
-  // Montar dados
-  const rows = peds.map(p => {
-    const cl = DB.clientes.find(c => c.id === p.clienteId) || {};
-    const ton = (p.itens||[]).reduce((a,i) => a+(parseFloat(i.qtd)||0), 0);
-    const custo = (parseFloat(p.custoPorTon||0)) * ton;
-    const comissao = (parseFloat(p.comissaoPorTon||0)) * ton;
-    const margem = p.valorTotal - custo - comissao;
-    const arqNomes = tipo => (p.arquivos||[]).find(a=>a.tipo===tipo)?.nome || '';
-
-    return {
-      'PV Nº':          `PV-${new Date().getFullYear()}-${String(p.numero).padStart(3,'0')}`,
-      'Data':           p.dataPedido || '',
-      'Status':         statusLabel(p.status),
-      'Vendedor':       p.vendedorNome || '',
-      // Cliente
-      'Cliente':        p.clienteNome || '',
-      'CNPJ Cliente':   cl.cnpj || '',
-      'IE Cliente':     cl.ie || '',
-      'Cidade/UF':      cl.cidade ? `${cl.cidade}/${cl.uf}` : '',
-      // Itens
-      'Produtos':       (p.itens||[]).map(i=>i.nome).join(' | '),
-      'Qtd Total (ton)':ton,
-      // Valores
-      'Valor Total (R$)':       p.valorTotal || 0,
-      'Preço Médio/ton (R$)':  ton > 0 ? +(p.valorTotal/ton).toFixed(2) : 0,
-      // Condições
-      'Frete':          p.frete || '',
-      'Pagamento':      p.formaPgto || '',
-      'Local Coleta':   p.localColeta || '',
-      'Data Coleta':    p.dataColeta || '',
-      'Validade PV':    p.validade || '',
-      // Logística
-      'Prev. Embarque': p.prevEmbarque || '',
-      'Motorista':      p.motorista || '',
-      'Placa 1':        p.placa1 || '',
-      'Placa 2':        p.placa2 || '',
-      'Placa 3':        p.placa3 || '',
-      // Documentos fiscais
-      'NF Fornecedor Nº': p.nfFornecedor || '',
-      'NF Venda Nº':      p.nfVenda || '',
-      'Lote Nº':          p.loteNumero || '',
-      'Arquivo NF Forn.': arqNomes('nf_fornecedor'),
-      'Arquivo NF Venda': arqNomes('nf_venda'),
-      'Arquivo Laudo':    arqNomes('laudo'),
-      'Pedido Assinado':  arqNomes('assinado'),
-      'Comprovante Pgto': arqNomes('comprovante'),
-      // Resultado financeiro
-      'Custo/ton (R$)':       parseFloat(p.custoPorTon||0),
-      'Custo Total (R$)':     +custo.toFixed(2),
-      'Comissão/ton (R$)':    parseFloat(p.comissaoPorTon||0),
-      'Comissão Total (R$)':  +comissao.toFixed(2),
-      'Margem Líquida (R$)':  +margem.toFixed(2),
-      'Margem %':             p.valorTotal > 0 ? +(margem/p.valorTotal*100).toFixed(2) : 0,
-      // Observações
-      'Observações':    p.obs || '',
-    };
-  });
-
-  const ws = XLSX.utils.json_to_sheet(rows);
-
-  // Larguras das colunas
-  const wscols = [
-    {wch:14},{wch:12},{wch:20},{wch:20},
-    {wch:35},{wch:22},{wch:14},{wch:18},
-    {wch:45},{wch:14},
-    {wch:18},{wch:18},
-    {wch:8},{wch:22},{wch:18},{wch:14},{wch:14},
-    {wch:16},{wch:22},{wch:12},{wch:12},{wch:12},
-    {wch:16},{wch:14},{wch:10},
-    {wch:22},{wch:22},{wch:20},{wch:22},{wch:20},
-    {wch:14},{wch:16},{wch:16},{wch:18},{wch:16},{wch:10},
-    {wch:30},
-  ];
-  ws['!cols'] = wscols;
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Pedidos');
-
-  // Aba de resumo
-  const concluidos = peds.filter(p => p.status==='concluido' && (p.custoPorTon||p.comissaoPorTon));
-  if (concluidos.length) {
-    const totVenda = concluidos.reduce((a,p)=>a+(p.valorTotal||0),0);
-    const totCusto = concluidos.reduce((a,p)=>{const t=(p.itens||[]).reduce((b,i)=>b+(parseFloat(i.qtd)||0),0);return a+(parseFloat(p.custoPorTon||0)*t);},0);
-    const totCom   = concluidos.reduce((a,p)=>{const t=(p.itens||[]).reduce((b,i)=>b+(parseFloat(i.qtd)||0),0);return a+(parseFloat(p.comissaoPorTon||0)*t);},0);
-    const totMarg  = totVenda - totCusto - totCom;
-    const resumo = [
-      {'Indicador':'Total Pedidos Exportados','Valor':peds.length},
-      {'Indicador':'Pedidos Concluídos','Valor':concluidos.length},
-      {'Indicador':'Receita Total (R$)','Valor':+totVenda.toFixed(2)},
-      {'Indicador':'Custo Total (R$)','Valor':+totCusto.toFixed(2)},
-      {'Indicador':'Comissões Pagas (R$)','Valor':+totCom.toFixed(2)},
-      {'Indicador':'Margem Líquida (R$)','Valor':+totMarg.toFixed(2)},
-      {'Indicador':'Margem %','Valor':totVenda>0?+(totMarg/totVenda*100).toFixed(2):0},
-    ];
-    const ws2 = XLSX.utils.json_to_sheet(resumo);
-    ws2['!cols'] = [{wch:30},{wch:20}];
-    XLSX.utils.book_append_sheet(wb, ws2, 'Resumo');
-  }
-
-  const data = new Date().toLocaleDateString('pt-BR').replace(/\//g,'-');
-  XLSX.writeFile(wb, `Madrigal-Pedidos-${data}.xlsx`);
-  toast(`✅ Excel gerado com ${peds.length} pedidos!`, 'ok');
-}
-
-function toggleSbSection(sectionId, iconId) {
-  const sec = el(sectionId);
-  const ico = el(iconId);
-  if (!sec) return;
-  const hidden = sec.classList.contains('hide');
-  if (hidden) {
-    sec.classList.remove('hide');
-    if (ico) ico.style.transform = 'rotate(0deg)';
-  } else {
-    sec.classList.add('hide');
-    if (ico) ico.style.transform = 'rotate(-90deg)';
-  }
-}
-
-window.addEventListener('DOMContentLoaded',init);
 
 </script>
 </body>
