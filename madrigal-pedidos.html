@@ -84,15 +84,20 @@ textarea{resize:vertical;min-height:80px}
 .s-aprovado_embarque,.s-lib_embarque,.s-ag_embarque{background:#e8f5e9;color:#1a5e2a}
 .s-aguardando_pagamento,.s-ag_pagamento{background:var(--amber-light);color:var(--amber)}
 .s-concluido{background:#d3d1c7;color:#444}
-.s-cancelado{background:var(--red-light);color:var(--red)}
+.s-cancelado{background:#f0f0f0;color:#888}
 .s-aguardando_aprovacao{background:var(--amber-light);color:var(--amber)}
 .s-aguardando_assinatura{background:var(--blue-light);color:var(--blue)}
-.s-aguardando_validacao{background:var(--amber-light);color:var(--amber)}
-.s-aprovado_embarque{background:#e8f5e9;color:#1a5e2a}
-.s-aguardando_pagamento{background:var(--amber-light);color:var(--amber)}
+.s-validar_assinatura{background:#ede7f6;color:#5B3A8C}
+.s-aguardando_validacao{background:#ede7f6;color:#5B3A8C}
 .s-lib_embarque{background:#e8f5e9;color:#1a5e2a}
-.s-validar_assinatura{background:var(--amber-light);color:var(--amber)}
+.s-aprovado_embarque{background:#e8f5e9;color:#1a5e2a}
+.s-ag_pagamento{background:var(--amber-light);color:var(--amber)}
+.s-aguardando_pagamento{background:var(--amber-light);color:var(--amber)}
+.s-ag_embarque{background:var(--blue-light);color:var(--blue)}
+.s-concluido{background:#d3d1c7;color:#444}
 .s-reprovado{background:var(--red-light);color:var(--red)}
+.s-ag_aprovacao{background:var(--amber-light);color:var(--amber)}
+.s-ag_assinatura{background:var(--blue-light);color:var(--blue)}
 /* FORM */
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
 .form-row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem}
@@ -395,7 +400,7 @@ function ensureDB(){
   if(numChanged) saveLocal();
 
   // Normalizar status de pedidos vindos de outros formatos
-  const statusMap={'ag_aprovacao':'aguardando_aprovacao','aprovado_assinatura':'aguardando_assinatura','ag_assinatura':'aguardando_assinatura','validar_assinatura':'aguardando_validacao','lib_embarque':'aprovado_embarque','ag_pagamento':'aguardando_pagamento','ag_embarque':'aprovado_embarque'};
+  const statusMap={'aguardando_validacao':'validar_assinatura','aprovado_assinatura':'aguardando_assinatura','aprovado_embarque':'lib_embarque','ag_aprovacao':'aguardando_aprovacao'};
   DB.pedidos.forEach(p=>{if(statusMap[p.status])p.status=statusMap[p.status];});
   // Normalizar aliases de status
   DB.pedidos.forEach(p=>{if(STATUS_ALIAS[p.status])p.status=STATUS_ALIAS[p.status];});
@@ -912,7 +917,7 @@ function renderRankingVendedores(peds){
 // ===================== PEDIDOS =====================
 let filtroStatus='todos';
 function renderPedidos(c){
-  const statuses=['todos','digitado','aguardando_aprovacao','aprovado_assinatura','aguardando_assinatura','aguardando_validacao','aprovado_embarque','aguardando_pagamento','concluido','cancelado'];
+  const statuses=['todos','aguardando_aprovacao','aguardando_assinatura','validar_assinatura','lib_embarque','ag_pagamento','ag_embarque','concluido','reprovado','cancelado'];
   const mine=currentUser.role==='master'?DB.pedidos:DB.pedidos.filter(p=>p.vendedorId===currentUser.id);
   // Filtros extras
   const fDataIni=document.getElementById('f-data-ini')?.value||window._fDataIni||'';
@@ -1161,93 +1166,117 @@ function nextNumero(){const nums=DB.pedidos.map(p=>parseInt(p.numero)||0).filter
 
 // ===================== VER PEDIDO =====================
 function openPedido(id){
-  const p=DB.pedidos.find(x=>x.id===id);if(!p)return;
+  const p=DB.pedidos.find(x=>x.id===id); if(!p) return;
   const isMaster=currentUser.role==='master';
-  const canEdit=(isMaster||currentUser.id===p.vendedorId)&&['digitado','aguardando_aprovacao'].includes(p.status);
-  const canAprov=isMaster&&p.status==='aguardando_aprovacao';
-  const canValid=isMaster&&p.status==='aguardando_validacao';
-  const canDownload=['aprovado_assinatura','aguardando_assinatura','aguardando_validacao','aprovado_embarque','aguardando_pagamento','concluido'].includes(p.status);
-  const canConcluir=isMaster&&p.status==='aprovado_embarque';
+  const isVendedor=currentUser.id===p.vendedorId;
+  const st=p.status;
   const cl=DB.clientes.find(c=>c.id===p.clienteId)||{razaoSocial:p.clienteNome,cnpj:'-',ie:'-',endereco:'-',cidade:'-',uf:'-',cep:'-'};
+  const ton=(p.itens||[]).reduce((a,it)=>a+(parseFloat(it.qtd)||0),0);
+
+  // Permissões por status
+  const canPDF = !['aguardando_aprovacao'].includes(st) && st!=='cancelado';
+  const PGTO_ANTECIPADO = ['Antecipado','À vista no carregamento'];
+
   document.getElementById('modal-pedido-title').textContent=`PV-${String(p.numero).padStart(3,'0')} — ${p.clienteNome}`;
 
-  // Bloco financeiro: master pode preencher a partir de aguardando_aprovacao
-  const statusComFin=['aguardando_aprovacao','aguardando_assinatura','aguardando_validacao','aprovado_embarque','aguardando_pagamento','concluido'];
-  const showFin=isMaster&&statusComFin.includes(p.status);
-  const finReadonly=p.status==='concluido';
-  const ton=(p.itens||[]).reduce((a,it)=>a+(parseFloat(it.qtd)||0),0);
-  const margemLiq=ton>0&&p.custoPorTon&&p.comissaoPorTon
-    ?p.valorTotal-(parseFloat(p.custoPorTon)*ton)-(parseFloat(p.comissaoPorTon)*ton)
-    :null;
-  const finHTML=showFin?`
-    <div class="conclusao-box" style="border-color:var(--green);margin-bottom:.8rem">
-      <div class="conclusao-title" style="color:var(--green)">💰 Resultado Financeiro ${finReadonly?'(confirmado)':'(estimado)'}</div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Custo de Compra (R$/ton) *</label>
-          <input id="fin-custo" type="number" step="0.01" value="${p.custoPorTon||''}" placeholder="Ex: 3800.00" ${finReadonly?'readonly style="background:var(--gray-light)"':''} onchange="atualizarResultado('${p.id}',this.value,document.getElementById('fin-com').value)">
-        </div>
-        <div class="form-group">
-          <label>Comissão Vendedor (R$/ton)</label>
-          <input id="fin-com" type="number" step="0.01" value="${p.comissaoPorTon||''}" placeholder="Ex: 50.00" ${finReadonly?'readonly style="background:var(--gray-light)"':''} onchange="atualizarResultado('${p.id}',document.getElementById('fin-custo').value,this.value)">
-        </div>
-      </div>
-      <div id="fin-preview-${p.id}" style="display:${p.custoPorTon?'grid':'none'};grid-template-columns:repeat(4,1fr);gap:.5rem;margin-top:.6rem">
-        ${p.custoPorTon?`
-        <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
-          <div style="font-size:.65rem;color:var(--text-sec)">Receita</div>
-          <div style="font-weight:700;font-size:.82rem;color:var(--blue);font-family:'DM Mono',monospace">${fmtMoney(p.valorTotal)}</div>
-        </div>
-        <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
-          <div style="font-size:.65rem;color:var(--text-sec)">Custo Total</div>
-          <div style="font-weight:700;font-size:.82rem;color:var(--red);font-family:'DM Mono',monospace">${fmtMoney(parseFloat(p.custoPorTon)*ton)}</div>
-        </div>
-        <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
-          <div style="font-size:.65rem;color:var(--text-sec)">Comissão</div>
-          <div style="font-weight:700;font-size:.82rem;color:var(--amber);font-family:'DM Mono',monospace">${fmtMoney((parseFloat(p.comissaoPorTon)||0)*ton)}</div>
-        </div>
-        <div style="background:#fff;border:1px solid ${margemLiq>=0?'var(--green-mid)':'var(--red)'};border-radius:var(--radius);padding:.5rem;text-align:center">
-          <div style="font-size:.65rem;color:var(--text-sec)">Margem</div>
-          <div style="font-weight:700;font-size:.82rem;color:${margemLiq>=0?'var(--green)':'var(--red)'};font-family:'DM Mono',monospace">${fmtMoney(margemLiq)}</div>
-        </div>`:''
-        }
-      </div>
-      ${!finReadonly?`<div style="margin-top:.7rem;display:flex;justify-content:flex-end">
-        <button class="btn btn-primary btn-sm" onclick="salvarFinanceiro('${p.id}')">💾 Salvar valores</button>
-      </div>`:''}
-    </div>`:'';
+  // ── RESULTADO FINANCEIRO (master a partir de ag_aprovacao)
+  const statusComFin=['aguardando_aprovacao','aguardando_assinatura','validar_assinatura','lib_embarque','ag_pagamento','ag_embarque','concluido'];
+  const finHTML = (isMaster&&statusComFin.includes(st)) ? renderCamposFinanceiros(p,ton,st==='concluido') : '';
 
-  const conclusaoHTML=canConcluir?`
+  // ── STATUS 4: Liberado Embarque
+  const libEmbarqueHTML = (isMaster&&st==='lib_embarque') ? `
+    <div class="conclusao-box" style="border-color:var(--green)">
+      <div class="conclusao-title">🚛 Dados de Embarque</div>
+      <div class="form-row">
+        <div class="form-group"><label>Previsão de Embarque *</label><input id="le-previsao" value="${p.previsaoEmbarque||''}" placeholder="Ex: 25/04/2026"></div>
+        <div class="form-group"><label>Nome do Motorista *</label><input id="le-motorista" value="${p.motorista||''}" placeholder="Nome completo"></div>
+      </div>
+      <div class="form-row-3">
+        <div class="form-group"><label>Placa 1 *</label><input id="le-placa1" value="${p.placa1||''}" placeholder="ABC-1234" style="text-transform:uppercase"></div>
+        <div class="form-group"><label>Placa 2</label><input id="le-placa2" value="${p.placa2||''}" placeholder="Reboque 1" style="text-transform:uppercase"></div>
+        <div class="form-group"><label>Placa 3</label><input id="le-placa3" value="${p.placa3||''}" placeholder="Reboque 2" style="text-transform:uppercase"></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:.5rem">
+        <button class="btn btn-primary btn-sm" onclick="salvarLibEmbarque('${p.id}')">💾 Salvar e liberar</button>
+      </div>
+    </div>` : (p.previsaoEmbarque?`<div style="font-size:.82rem;background:var(--gray-light);padding:.5rem .8rem;border-radius:var(--radius);margin-bottom:.6rem">🚛 Embarque: ${p.previsaoEmbarque} | ${p.motorista||'-'} | ${[p.placa1,p.placa2,p.placa3].filter(Boolean).join(' · ')}</div>`:'');
+
+  // ── STATUS 5: Aguardando Pagamento
+  const agPgtoHTML = (['ag_pagamento','aguardando_pagamento'].includes(st)) ? `
+    <div class="conclusao-box" style="border-color:var(--amber)">
+      <div class="conclusao-title" style="color:var(--amber)">💳 Comprovante de Pagamento</div>
+      ${p.arquivos?.find(a=>a.tipo==='comprovante')
+        ? `<div class="file-item">💰 <span class="file-name">${p.arquivos.find(a=>a.tipo==='comprovante').nome}</span><span style="color:var(--green);font-size:.72rem">✓ Anexado</span></div>`
+        : `<div class="upload-area" onclick="document.getElementById('up-comp-${p.id}').click()">
+            <input type="file" id="up-comp-${p.id}" accept=".pdf,.jpg,.png,.jpeg" onchange="uploadArquivo('${p.id}','comprovante',this)">
+            💳 Anexar comprovante de pagamento
+           </div>`
+      }
+    </div>` : '';
+
+  // ── STATUS 6: Aguardando Embarque
+  const agEmbarqueHTML = (isMaster&&st==='ag_embarque') ? `
     <div class="conclusao-box">
-      <div class="conclusao-title">📋 Dados obrigatórios para Concluir</div>
+      <div class="conclusao-title">📦 Dados do Embarque (obrigatórios)</div>
       <div class="form-row">
-        <div class="form-group"><label>Número da NF *</label><input id="conc-nf" value="${p.nfNumero||''}" placeholder="Ex: 000123"></div>
-        <div class="form-group"><label>Número do Lote *</label><input id="conc-lote" value="${p.loteNumero||''}" placeholder="Ex: LOTE-2026-01"></div>
+        <div class="form-group"><label>Nº NF Fornecedor *</label><input id="emb-nff" value="${p.nfFornecedor||''}" placeholder="Ex: 000456"></div>
+        <div class="form-group"><label>Nº NF Venda *</label><input id="emb-nfv" value="${p.nfVenda||''}" placeholder="Ex: 000789"></div>
       </div>
-      <div class="form-group"><label>Descrição do Laudo</label><input id="conc-laudo" value="${p.laudoDesc||''}" placeholder="Referência do laudo"></div>
-      <div class="form-row">
-        <div><label style="font-size:.75rem;font-weight:700;color:var(--text-sec);text-transform:uppercase;letter-spacing:.5px">Nota Fiscal *</label>
-          ${p.arquivos&&p.arquivos.find(a=>a.tipo==='nf')?`<div class="file-item" style="margin-top:.35rem">🧾 <span class="file-name">${p.arquivos.find(a=>a.tipo==='nf').nome}</span><span style="color:var(--green);font-size:.72rem">✓</span></div>`:`<div class="upload-area" onclick="document.getElementById('up-nf-${p.id}').click()"><input type="file" id="up-nf-${p.id}" accept=".pdf,.xml" onchange="uploadArquivo('${p.id}','nf',this)">📎 Anexar NF (obrigatório)</div>`}
+      <div class="form-group"><label>Nº do Lote *</label><input id="emb-lote" value="${p.loteNumero||''}" placeholder="Ex: LOTE-2026-01"></div>
+      <div class="form-row-3">
+        <div>
+          <label style="font-size:.75rem;font-weight:700;color:var(--text-sec);text-transform:uppercase">NF Fornecedor *</label>
+          ${p.arquivos?.find(a=>a.tipo==='nf_fornecedor')
+            ?`<div class="file-item" style="margin-top:.3rem">🧾 <span class="file-name">${p.arquivos.find(a=>a.tipo==='nf_fornecedor').nome}</span><span style="color:var(--green);font-size:.72rem">✓</span></div>`
+            :`<div class="upload-area" onclick="document.getElementById('up-nff-${p.id}').click()"><input type="file" id="up-nff-${p.id}" accept=".pdf,.xml" onchange="uploadArquivo('${p.id}','nf_fornecedor',this)">📎 Anexar</div>`}
         </div>
-        <div><label style="font-size:.75rem;font-weight:700;color:var(--text-sec);text-transform:uppercase;letter-spacing:.5px">Arquivo do Lote *</label>
-          ${p.arquivos&&p.arquivos.find(a=>a.tipo==='lote')?`<div class="file-item" style="margin-top:.35rem">📦 <span class="file-name">${p.arquivos.find(a=>a.tipo==='lote').nome}</span><span style="color:var(--green);font-size:.72rem">✓</span></div>`:`<div class="upload-area" onclick="document.getElementById('up-lote-${p.id}').click()"><input type="file" id="up-lote-${p.id}" accept=".pdf,.jpg,.png,.xlsx" onchange="uploadArquivo('${p.id}','lote',this)">📎 Arquivo do lote (obrigatório)</div>`}
+        <div>
+          <label style="font-size:.75rem;font-weight:700;color:var(--text-sec);text-transform:uppercase">NF Venda *</label>
+          ${p.arquivos?.find(a=>a.tipo==='nf_venda')
+            ?`<div class="file-item" style="margin-top:.3rem">🧾 <span class="file-name">${p.arquivos.find(a=>a.tipo==='nf_venda').nome}</span><span style="color:var(--green);font-size:.72rem">✓</span></div>`
+            :`<div class="upload-area" onclick="document.getElementById('up-nfv-${p.id}').click()"><input type="file" id="up-nfv-${p.id}" accept=".pdf,.xml" onchange="uploadArquivo('${p.id}','nf_venda',this)">📎 Anexar</div>`}
+        </div>
+        <div>
+          <label style="font-size:.75rem;font-weight:700;color:var(--text-sec);text-transform:uppercase">Laudo *</label>
+          ${p.arquivos?.find(a=>a.tipo==='laudo')
+            ?`<div class="file-item" style="margin-top:.3rem">📄 <span class="file-name">${p.arquivos.find(a=>a.tipo==='laudo').nome}</span><span style="color:var(--green);font-size:.72rem">✓</span></div>`
+            :`<div class="upload-area" onclick="document.getElementById('up-laudo-${p.id}').click()"><input type="file" id="up-laudo-${p.id}" accept=".pdf,.jpg,.png" onchange="uploadArquivo('${p.id}','laudo',this)">📎 Anexar</div>`}
         </div>
       </div>
-      <div><label style="font-size:.75rem;font-weight:700;color:var(--text-sec);text-transform:uppercase;letter-spacing:.5px">Laudo (opcional)</label>
-        ${p.arquivos&&p.arquivos.find(a=>a.tipo==='laudo')?`<div class="file-item" style="margin-top:.35rem">📄 <span class="file-name">${p.arquivos.find(a=>a.tipo==='laudo').nome}</span></div>`:`<div class="upload-area" onclick="document.getElementById('up-laudo-${p.id}').click()"><input type="file" id="up-laudo-${p.id}" accept=".pdf,.jpg,.png" onchange="uploadArquivo('${p.id}','laudo',this)">📎 Anexar laudo</div>`}
+      <div style="display:flex;justify-content:flex-end;margin-top:.7rem">
+        <button class="btn btn-primary btn-sm" onclick="concluirPedido('${p.id}')">✓ Concluir Pedido</button>
       </div>
+    </div>` : '';
+
+  // ── STATUS 2: Aguardando Assinatura
+  const assinaturaUpHTML = (['aguardando_assinatura','ag_assinatura'].includes(st)&&(isMaster||isVendedor)) ? `
+    <div class="conclusao-box" style="border-color:var(--blue)">
+      <div class="conclusao-title" style="color:var(--blue)">✍️ Pedido Assinado pelo Cliente</div>
+      ${p.arquivos?.find(a=>a.tipo==='assinado')
+        ?`<div class="file-item">✍️ <span class="file-name">${p.arquivos.find(a=>a.tipo==='assinado').nome}</span><span style="color:var(--green);font-size:.72rem">✓ Anexado</span></div>`
+        :`<div class="upload-area" onclick="document.getElementById('up-ass-${p.id}').click()">
+            <input type="file" id="up-ass-${p.id}" accept=".pdf,.jpg,.png" onchange="uploadArquivo('${p.id}','assinado',this)">
+            📎 Anexar PDF assinado pelo cliente
+          </div>`}
+    </div>` : '';
+
+  // ── REPROVAR/JUSTIFICATIVA
+  const reprovInput=(isMaster&&!['concluido','cancelado'].includes(st))?`
+    <div class="form-group" style="margin-top:.8rem"><label>Justificativa (obrigatória para reprovar/cancelar)</label>
+      <textarea id="just-nota" style="min-height:55px" placeholder="Descreva o motivo..."></textarea>
     </div>`:'';
 
+  // ── CORPO DO MODAL
   document.getElementById('modal-pedido-body').innerHTML=`
     <div class="alert alert-info" style="margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.6rem">
-      <span>Status: <strong>${statusLabel(p.status)}</strong></span>
+      <span>Status: <strong>${statusLabel(st)}</strong></span>
       <div style="display:flex;align-items:center;gap:.4rem;font-size:.8rem">
         <span>👤</span>
         ${isMaster
-          ? `<select id="sel-vend-${p.id}" style="font-size:.78rem;padding:.2rem .45rem;border:1px solid var(--border);border-radius:var(--radius);font-family:var(--font)" onchange="trocarVendedor('${p.id}',this.value)">
+          ?`<select id="sel-vend-${p.id}" style="font-size:.78rem;padding:.2rem .45rem;border:1px solid var(--border);border-radius:var(--radius);font-family:var(--font)" onchange="trocarVendedor('${p.id}',this.value)">
               ${DB.users.filter(u=>u.ativo).map(u=>`<option value="${u.id}" ${u.id===p.vendedorId?'selected':''}>${u.role==='master'?'👑 ':''}${u.nome}</option>`).join('')}
-             </select>`
-          : `<strong>${p.vendedorNome||'-'}</strong>`}
+            </select>`
+          :`<strong>${p.vendedorNome||'-'}</strong>`}
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
@@ -1264,47 +1293,70 @@ function openPedido(id){
     </tbody></table></div>
     <div style="text-align:right;font-weight:700;color:var(--green);font-size:1rem;margin-bottom:1rem;font-family:'DM Mono',monospace">TOTAL: ${fmtMoney(p.valorTotal)}</div>
     ${p.obs?`<div class="section-divider">Observações</div><div style="font-size:.82rem;background:var(--gray-light);padding:.55rem .8rem;border-radius:var(--radius);margin-bottom:.8rem">${p.obs}</div>`:''}
-    ${renderCamposFinanceiros(p,isMaster)}
-    ${(p.nfNumero||p.loteNumero)?`<div class="section-divider">Dados do Embarque</div><div style="font-size:.82rem;line-height:1.8;background:var(--gray-light);padding:.55rem .8rem;border-radius:var(--radius);margin-bottom:.8rem">${p.nfNumero?`<b>NF:</b> ${p.nfNumero}<br>`:''}${p.loteNumero?`<b>Lote:</b> ${p.loteNumero}<br>`:''}${p.laudoDesc?`<b>Laudo:</b> ${p.laudoDesc}`:''}</div>`:''}
+    ${finHTML}
+    ${libEmbarqueHTML}
+    ${assinaturaUpHTML}
+    ${agPgtoHTML}
+    ${agEmbarqueHTML}
     <div class="section-divider">Arquivos</div>
     ${renderArquivos(p)}
-    ${p.status==='aguardando_assinatura'?`<div style="margin-top:.5rem"><div class="upload-area" onclick="document.getElementById('up-assinado-${p.id}').click()"><input type="file" id="up-assinado-${p.id}" accept=".pdf,.jpg,.png" onchange="uploadArquivo('${p.id}','assinado',this)">✍️ Anexar pedido assinado pelo cliente</div></div>`:''}
-    ${finHTML}
-    ${conclusaoHTML}
-    ${canAprov||canValid?`<div class="form-group" style="margin-top:1rem"><label>Observação (opcional)</label><textarea id="aprov-nota" style="min-height:55px" placeholder="Adicione uma observação..."></textarea></div>`:''}
+    ${reprovInput}
     <div class="section-divider">Histórico</div>
-    <div class="timeline">${(p.historico||[]).map(h=>`<div class="tl-item"><div class="tl-dot"></div><div><div class="tl-status">${statusLabel(h.status)}</div><div class="tl-info">${h.usuario} — ${h.data}</div>${h.nota?`<div class="tl-note">${h.nota}</div>`:''}</div></div>`).join('')}</div>`;
+    <div>${(p.historico||[]).map(h=>`<div class="tl-item"><div class="tl-dot"></div><div><div class="tl-status">${statusLabel(h.status)}</div><div class="tl-info">${h.usuario} — ${h.data}</div>${h.nota?`<div class="tl-note">${h.nota}</div>`:''}</div></div>`).join('')}</div>`;
 
-  const footer=document.getElementById('modal-pedido-footer');footer.innerHTML='';
-  // Editar: master pode em qualquer status, vendedor só nos iniciais
-  if(isMaster){
-    const b=mk('btn btn-secondary','✏️ Editar',()=>{
-      if(!canEdit){confirmarAcaoMaster('editar',null,()=>{closeModal('modal-pedido');renderNovoPedido(document.getElementById('main-content'),p.id);});}
-      else{closeModal('modal-pedido');renderNovoPedido(document.getElementById('main-content'),p.id);}
-    });footer.appendChild(b);
-  } else if(canEdit){
-    const b=mk('btn btn-secondary','✏️ Editar',()=>{closeModal('modal-pedido');renderNovoPedido(document.getElementById('main-content'),p.id);});footer.appendChild(b);
+  // ── BOTÕES DO FOOTER
+  const footer=document.getElementById('modal-pedido-footer'); footer.innerHTML='';
+
+  // Editar (só nos status iniciais)
+  if((isMaster||isVendedor)&&['aguardando_aprovacao'].includes(st)){
+    footer.appendChild(mk('btn btn-secondary','✏️ Editar',()=>{closeModal('modal-pedido');renderNovoPedido(document.getElementById('main-content'),p.id);}));
   }
-  if(canDownload){const b=mk('btn btn-secondary','⬇ Baixar PDF',()=>gerarPDF(p.id));footer.appendChild(b);}
-  if(canAprov){footer.appendChild(mk('btn btn-danger','Reprovar',()=>acaoPedido(p.id,'digitado','Pedido reprovado.')));footer.appendChild(mk('btn btn-primary','✓ Aprovar',()=>acaoPedido(p.id,'aprovado_assinatura','Pedido aprovado.')));}
-  if(p.status==='aprovado_assinatura'&&isMaster)footer.appendChild(mk('btn btn-amber','→ Enviar p/ Assinatura',()=>acaoPedido(p.id,'aguardando_assinatura','Aguardando assinatura.')));
-  if(canValid){
-    footer.appendChild(mk('btn btn-danger','Reprovar assinatura',()=>acaoPedido(p.id,'aguardando_assinatura','Assinatura reprovada.')));
-    const pgtoAntec=['Antecipado','À vista na descarga'].includes(p.formaPgto);
-    footer.appendChild(mk('btn btn-primary','✓ Validar assinatura',()=>acaoPedido(p.id,pgtoAntec?'aguardando_pagamento':'aprovado_embarque','Assinatura validada.')));
+
+  // PDF (após aprovação)
+  if(canPDF){
+    footer.appendChild(mk('btn btn-secondary','⬇ PDF',()=>gerarPDF(p.id)));
   }
-  if(p.status==='aguardando_pagamento'&&isMaster)footer.appendChild(mk('btn btn-primary','✓ Confirmar Pagamento',()=>acaoPedido(p.id,'aprovado_embarque','Pagamento confirmado.')));
-  if(canConcluir)footer.appendChild(mk('btn btn-primary','✓ Concluir Pedido',()=>concluirPedido(p.id)));
-  // Master cancela em qualquer status com senha + motivo
-  if(isMaster&&p.status!=='cancelado'){
+
+  // Fluxo por status
+  if(isMaster&&st==='aguardando_aprovacao'){
+    footer.appendChild(mk('btn btn-primary','✓ Aprovar',()=>acaoPedido(p.id,'aguardando_assinatura','Pedido aprovado. Aguardando assinatura do cliente.')));
+  }
+  if(isMaster&&['aguardando_assinatura','ag_assinatura'].includes(st)&&p.arquivos?.find(a=>a.tipo==='assinado')){
+    footer.appendChild(mk('btn btn-primary','✓ Validar Assinatura',()=>navigate('pedidos')||acaoPedidoValidarAssinatura(p.id)));
+  }
+  if(isMaster&&st==='validar_assinatura'){
+    footer.appendChild(mk('btn btn-primary','✓ Validar e Liberar Embarque',()=>acaoPedido(p.id,'lib_embarque','Assinatura validada. Pedido liberado para embarque.')));
+  }
+  if(isMaster&&st==='lib_embarque'&&p.previsaoEmbarque){
+    const pgtoAntec=PGTO_ANTECIPADO.includes(p.formaPgto);
+    if(pgtoAntec){
+      footer.appendChild(mk('btn btn-primary','→ Aguardar Pagamento',()=>acaoPedido(p.id,'ag_pagamento','Aguardando comprovante de pagamento.')));
+    } else {
+      footer.appendChild(mk('btn btn-primary','→ Aguardar Embarque',()=>acaoPedido(p.id,'ag_embarque','Pedido liberado para embarque.')));
+    }
+  }
+  if(['ag_pagamento','aguardando_pagamento'].includes(st)&&(isMaster||isVendedor)&&p.arquivos?.find(a=>a.tipo==='comprovante')){
+    footer.appendChild(mk('btn btn-primary','✓ Confirmar Pagamento',()=>acaoPedido(p.id,'ag_embarque','Pagamento confirmado. Aguardando embarque.')));
+  }
+
+  // Reprovar (master, em qualquer status exceto concluido e cancelado)
+  if(isMaster&&!['concluido','cancelado'].includes(st)){
+    footer.appendChild(mk('btn btn-danger','✕ Reprovar',()=>reprovarPedido(p.id)));
     footer.appendChild(mk('btn btn-danger','🗑 Cancelar',()=>confirmarAcaoMaster('cancelar',p.id,null)));
   }
-  if(isMaster){
-    footer.appendChild(mk('btn btn-danger','🗑 Excluir definitivamente',()=>confirmarExclusao(p.id)));
+
+  // Vendedor pode reenviar reprovado para aprovação
+  if(isVendedor&&st==='reprovado'){
+    footer.appendChild(mk('btn btn-amber','↩ Reenviar para Aprovação',()=>acaoPedido(p.id,'aguardando_aprovacao','Pedido reenviado para aprovação.')));
   }
+
+  // Excluir definitivo (master)
+  if(isMaster&&!['concluido'].includes(st)){
+    footer.appendChild(mk('btn btn-danger','⛔ Excluir',()=>confirmarExclusao(p.id)));
+  }
+
   document.getElementById('modal-pedido').classList.remove('hidden');
 }
-
 function mk(cls,txt,fn){const b=document.createElement('button');b.className=cls;b.textContent=txt;b.onclick=fn;return b;}
 
 function confirmarAcaoMaster(acao,pedidoId,callback){
@@ -1352,29 +1404,45 @@ async function executarAcaoMaster(acao,pedidoId){
 }
 
 async function concluirPedido(id){
-  const nf=(document.getElementById('conc-nf')||{}).value?.trim();
-  const lote=(document.getElementById('conc-lote')||{}).value?.trim();
-  const laudo=(document.getElementById('conc-laudo')||{}).value?.trim();
+  const nff=document.getElementById('emb-nff')?.value?.trim();
+  const nfv=document.getElementById('emb-nfv')?.value?.trim();
+  const lote=document.getElementById('emb-lote')?.value?.trim();
   const p=DB.pedidos.find(x=>x.id===id);
   const erros=[];
-  if(!nf)erros.push('Número da NF');
-  if(!lote)erros.push('Número do Lote');
-  if(!p.arquivos?.find(a=>a.tipo==='nf'))erros.push('Arquivo da NF');
-  if(!p.arquivos?.find(a=>a.tipo==='lote'))erros.push('Arquivo do Lote');
-  if(erros.length>0){toast('Faltando: '+erros.join(', '),'err');return;}
+  if(!nff)erros.push('Nº NF Fornecedor');
+  if(!nfv)erros.push('Nº NF Venda');
+  if(!lote)erros.push('Nº do Lote');
+  if(!p.arquivos?.find(a=>a.tipo==='nf_fornecedor'))erros.push('Arquivo NF Fornecedor');
+  if(!p.arquivos?.find(a=>a.tipo==='nf_venda'))erros.push('Arquivo NF Venda');
+  if(!p.arquivos?.find(a=>a.tipo==='laudo'))erros.push('Arquivo Laudo');
+  if(erros.length){toast('Faltando: '+erros.join(', '),'err');return;}
   const idx=DB.pedidos.findIndex(x=>x.id===id);
-  DB.pedidos[idx].nfNumero=nf;DB.pedidos[idx].loteNumero=lote;DB.pedidos[idx].laudoDesc=laudo||'';
+  DB.pedidos[idx].nfFornecedor=nff;
+  DB.pedidos[idx].nfVenda=nfv;
+  DB.pedidos[idx].loteNumero=lote;
   DB.pedidos[idx].status='concluido';
-  addHistorico(id,'concluido',`NF: ${nf} | Lote: ${lote}`,currentUser.nome);
-  await saveDB();closeModal('modal-pedido');toast('Pedido concluído!','ok');navigate('pedidos');
+  addHistorico(id,'concluido',`NF Forn: ${nff} | NF Venda: ${nfv} | Lote: ${lote}`,currentUser.nome);
+  await saveDB();closeModal('modal-pedido');toast('Pedido concluído! 🎉','ok');navigate('pedidos');
 }
 
 function renderArquivos(p){
   const arqs=p.arquivos||[];
   if(!arqs.length)return'<div style="font-size:.8rem;color:var(--text-sec)">Nenhum arquivo anexado.</div>';
-  const labels={assinado:'Pedido Assinado',nf:'Nota Fiscal',laudo:'Laudo',lote:'Arquivo do Lote'};
-  const icons={assinado:'✍️',nf:'🧾',laudo:'📄',lote:'📦'};
-  return'<div>'+arqs.map(a=>`<div class="file-item"><span>${icons[a.tipo]||'📎'}</span><span class="file-name">${labels[a.tipo]||a.tipo}: ${a.nome}</span><span style="font-size:.7rem;color:var(--text-sec)">${a.data}</span></div>`).join('')+'</div>';
+  const labels={assinado:'Pedido Assinado (cliente)',nf_fornecedor:'NF Fornecedor',nf_venda:'NF Venda',laudo:'Laudo',comprovante:'Comprovante de Pagamento'};
+  const icons={assinado:'✍️',nf_fornecedor:'🧾',nf_venda:'🧾',laudo:'📄',comprovante:'💰'};
+  const isConcluido=p.status==='concluido';
+  return'<div>'+arqs.map(a=>`
+    <div class="file-item">
+      <span>${icons[a.tipo]||'📎'}</span>
+      <span class="file-name">${labels[a.tipo]||a.tipo}: ${a.nome}</span>
+      <span style="font-size:.7rem;color:var(--text-sec);margin-left:auto">${a.data}</span>
+      ${isConcluido&&a.b64?`<button class="btn btn-secondary btn-sm" style="padding:.15rem .5rem;font-size:.7rem" onclick="downloadArquivo('${a.nome}','${a.b64}')">⬇</button>`:''}
+    </div>`).join('')+'</div>';
+}
+
+function downloadArquivo(nome, b64){
+  const a=document.createElement('a');
+  a.href=b64; a.download=nome; a.click();
 }
 
 async function acaoPedido(id,novoStatus,nota){
@@ -1393,7 +1461,7 @@ async function uploadArquivo(pedId,tipo,input){
   if(!DB.pedidos[idx].arquivos)DB.pedidos[idx].arquivos=[];
   DB.pedidos[idx].arquivos=DB.pedidos[idx].arquivos.filter(a=>a.tipo!==tipo);
   DB.pedidos[idx].arquivos.push({tipo,nome:file.name,data:dateStr()});
-  if(tipo==='assinado'){DB.pedidos[idx].status='aguardando_validacao';addHistorico(pedId,'aguardando_validacao',`Assinado: ${file.name}`,currentUser.nome);}
+  if(tipo==='assinado'){DB.pedidos[idx].status='validar_assinatura';addHistorico(pedId,'validar_assinatura',`PDF assinado anexado: ${file.name}`,currentUser.nome);}
   else addHistorico(pedId,DB.pedidos[idx].status,`Arquivo (${tipo}): ${file.name}`,currentUser.nome);
   await saveDB();toast('Arquivo registrado!','ok');openPedido(pedId);
 }
@@ -1736,6 +1804,38 @@ function previewFinanceiro(pedId, ton){
     </div>`;
 }
 
+async function salvarLibEmbarque(pedId){
+  const prev=document.getElementById('le-previsao')?.value?.trim();
+  const mot=document.getElementById('le-motorista')?.value?.trim();
+  const pl1=document.getElementById('le-placa1')?.value?.trim().toUpperCase();
+  const pl2=document.getElementById('le-placa2')?.value?.trim().toUpperCase();
+  const pl3=document.getElementById('le-placa3')?.value?.trim().toUpperCase();
+  if(!prev||!mot||!pl1){toast('Previsão, motorista e placa 1 são obrigatórios.','err');return;}
+  const idx=DB.pedidos.findIndex(p=>p.id===pedId);
+  DB.pedidos[idx].previsaoEmbarque=prev;
+  DB.pedidos[idx].motorista=mot;
+  DB.pedidos[idx].placa1=pl1;
+  DB.pedidos[idx].placa2=pl2||'';
+  DB.pedidos[idx].placa3=pl3||'';
+  addHistorico(pedId,DB.pedidos[idx].status,`Embarque: ${prev} | ${mot} | ${[pl1,pl2,pl3].filter(Boolean).join(' · ')}`,currentUser.nome);
+  await saveDB();
+  toast('Dados de embarque salvos!','ok');
+  openPedido(pedId);
+}
+
+function acaoPedidoValidarAssinatura(pedId){
+  acaoPedido(pedId,'validar_assinatura','PDF assinado anexado. Aguardando validação do master.');
+}
+
+async function reprovarPedido(pedId){
+  const nota=document.getElementById('just-nota')?.value?.trim();
+  if(!nota){toast('Informe a justificativa para reprovar.','err');return;}
+  const idx=DB.pedidos.findIndex(p=>p.id===pedId);
+  DB.pedidos[idx].status='reprovado';
+  addHistorico(pedId,'reprovado','[REPROVADO] '+nota,currentUser.nome);
+  await saveDB();closeModal('modal-pedido');toast('Pedido reprovado.','ok');navigate('pedidos');
+}
+
 async function trocarVendedor(pedId, novoVendedorId){
   const novoVend = DB.users.find(u=>u.id===novoVendedorId);
   if(!novoVend) return;
@@ -1818,12 +1918,10 @@ function atualizarResultado(pedId,custoVal,comVal){
 }
 
 function statusLabel(s){const m={
-  digitado:'Digitado',
   ag_aprovacao:'Aguard. Aprovação',aguardando_aprovacao:'Aguard. Aprovação',
-  aprovado_assinatura:'Aprov. p/ Assinatura',
   ag_assinatura:'Aguard. Assinatura',aguardando_assinatura:'Aguard. Assinatura',
-  validar_assinatura:'Validar Assinatura',aguardando_validacao:'Aguard. Validação',
-  lib_embarque:'Liberado p/ Embarque',aprovado_embarque:'Aprov. p/ Embarque',
+  validar_assinatura:'Validar Assinatura',aguardando_validacao:'Validar Assinatura',
+  lib_embarque:'Liberado Embarque',aprovado_embarque:'Liberado Embarque',
   ag_pagamento:'Aguard. Pagamento',aguardando_pagamento:'Aguard. Pagamento',
   ag_embarque:'Aguard. Embarque',
   concluido:'Concluído',cancelado:'Cancelado',reprovado:'Reprovado'
