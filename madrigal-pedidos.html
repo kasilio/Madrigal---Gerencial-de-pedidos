@@ -666,6 +666,7 @@ function renderDashboard(c){
   ${renderGraficoProdutos(prodList,maxProdTon,maxProdVal)}
   ${renderGraficoClientes(clList,maxClVal)}
   ${renderRankingVendedores(peds)}
+  ${renderPainelResultados(peds)}
   <div class="card"><div class="card-title">Pedidos Recentes</div>
     ${DB.pedidos.slice(-5).reverse().map(p=>`
     <div class="pedido-row" onclick="openPedido('${p.id}')" style="grid-template-columns:80px 1fr 155px 115px">
@@ -759,6 +760,60 @@ function renderGraficoClientes(clList, maxVal){
     <div style="border-top:1px solid var(--border);margin-top:.7rem;padding-top:.6rem;display:flex;justify-content:flex-end">
       <span style="font-size:.75rem;color:var(--text-sec)">Total: <b style="color:var(--text)">${fmtMoney(totalVal)}</b></span>
     </div>
+  </div>`;
+}
+
+function renderPainelResultados(peds){
+  const statusAtivos=['aguardando_aprovacao','aguardando_assinatura','aguardando_validacao','aprovado_embarque','aguardando_pagamento'];
+  const emAndamento=peds.filter(p=>statusAtivos.includes(p.status)&&(p.custoPorTon>0||p.comissaoPorTon>0));
+  const concluidos=peds.filter(p=>p.status==='concluido'&&(p.custoPorTon>0||p.comissaoPorTon>0));
+  if(!emAndamento.length&&!concluidos.length) return '';
+
+  function calcTotais(lista){
+    const receita=lista.reduce((a,p)=>a+(p.valorTotal||0),0);
+    const ton=lista.reduce((a,p)=>a+(p.itens||[]).reduce((b,it)=>b+(parseFloat(it.qtd)||0),0),0);
+    const custo=lista.reduce((a,p)=>a+(parseFloat(p.custoPorTon||0))*(p.itens||[]).reduce((b,it)=>b+(parseFloat(it.qtd)||0),0),0);
+    const com=lista.reduce((a,p)=>a+(parseFloat(p.comissaoPorTon||0))*(p.itens||[]).reduce((b,it)=>b+(parseFloat(it.qtd)||0),0),0);
+    const margem=receita-custo-com;
+    const pct=receita>0?(margem/receita*100).toFixed(1):0;
+    return{receita,ton,custo,com,margem,pct};
+  }
+
+  function bloco(titulo,lista,cor,icone){
+    if(!lista.length) return '';
+    const t=calcTotais(lista);
+    return `<div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);padding:1rem">
+      <div style="font-size:.78rem;font-weight:700;color:${cor};text-transform:uppercase;letter-spacing:.5px;margin-bottom:.75rem">${icone} ${titulo} <span style="font-weight:400;opacity:.7">(${lista.length} pedido${lista.length!==1?'s':''})</span></div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.5rem">
+        <div style="border:1px solid var(--border);border-radius:var(--radius);padding:.55rem .7rem">
+          <div style="font-size:.63rem;color:var(--text-sec);text-transform:uppercase;letter-spacing:.4px">Receita</div>
+          <div style="font-weight:700;color:var(--blue);font-size:.88rem;font-family:'DM Mono',monospace">${fmtMoney(t.receita)}</div>
+          <div style="font-size:.68rem;color:var(--text-sec)">${t.ton.toFixed(1)} ton · ${t.receita>0&&t.ton>0?fmtMoney(t.receita/t.ton)+'/ton':''}</div>
+        </div>
+        <div style="border:1px solid var(--border);border-radius:var(--radius);padding:.55rem .7rem">
+          <div style="font-size:.63rem;color:var(--text-sec);text-transform:uppercase;letter-spacing:.4px">Custo Total</div>
+          <div style="font-weight:700;color:var(--red);font-size:.88rem;font-family:'DM Mono',monospace">${fmtMoney(t.custo)}</div>
+          <div style="font-size:.68rem;color:var(--text-sec)">Comissão: ${fmtMoney(t.com)}</div>
+        </div>
+        <div style="border:1px solid ${t.margem>=0?'var(--green-mid)':'#f5b5b5'};background:${t.margem>=0?'#e8f5e9':'#fcebeb'};border-radius:var(--radius);padding:.55rem .7rem;grid-column:1/-1">
+          <div style="font-size:.63rem;color:var(--text-sec);text-transform:uppercase;letter-spacing:.4px">Margem Líquida</div>
+          <div style="font-weight:700;color:${t.margem>=0?'var(--green)':'var(--red)'};font-size:1rem;font-family:'DM Mono',monospace">${fmtMoney(t.margem)} <span style="font-size:.75rem;font-weight:600">(${t.pct}%)</span></div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="card">
+    <div class="card-title">📈 Painel de Resultados</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:.8rem">
+      ${bloco('Resultados a Confirmar',emAndamento,'var(--amber)','🔮')}
+      ${bloco('Resultado Efetivo',concluidos,'var(--green)','✅')}
+    </div>
+    ${emAndamento.length&&concluidos.length?`
+    <div style="margin-top:.8rem;padding:.7rem 1rem;background:var(--gray-light);border-radius:var(--radius);font-size:.78rem">
+      <span style="font-weight:700">Total geral (${emAndamento.length+concluidos.length} pedidos):</span>
+      ${(()=>{const t=calcTotais([...emAndamento,...concluidos]);return `Receita ${fmtMoney(t.receita)} · Margem <b style="color:${t.margem>=0?'var(--green)':'var(--red)'}">${fmtMoney(t.margem)} (${t.pct}%)</b>`;})()}
+    </div>`:''}
   </div>`;
 }
 
@@ -1090,6 +1145,52 @@ function openPedido(id){
   const cl=DB.clientes.find(c=>c.id===p.clienteId)||{razaoSocial:p.clienteNome,cnpj:'-',ie:'-',endereco:'-',cidade:'-',uf:'-',cep:'-'};
   document.getElementById('modal-pedido-title').textContent=`PV-${p.numero} — ${p.clienteNome}`;
 
+  // Bloco financeiro: master pode preencher a partir de aguardando_aprovacao
+  const statusComFin=['aguardando_aprovacao','aguardando_assinatura','aguardando_validacao','aprovado_embarque','aguardando_pagamento','concluido'];
+  const showFin=isMaster&&statusComFin.includes(p.status);
+  const finReadonly=p.status==='concluido';
+  const ton=(p.itens||[]).reduce((a,it)=>a+(parseFloat(it.qtd)||0),0);
+  const margemLiq=ton>0&&p.custoPorTon&&p.comissaoPorTon
+    ?p.valorTotal-(parseFloat(p.custoPorTon)*ton)-(parseFloat(p.comissaoPorTon)*ton)
+    :null;
+  const finHTML=showFin?`
+    <div class="conclusao-box" style="border-color:var(--green);margin-bottom:.8rem">
+      <div class="conclusao-title" style="color:var(--green)">💰 Resultado Financeiro ${finReadonly?'(confirmado)':'(estimado)'}</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Custo de Compra (R$/ton) *</label>
+          <input id="fin-custo" type="number" step="0.01" value="${p.custoPorTon||''}" placeholder="Ex: 3800.00" ${finReadonly?'readonly style="background:var(--gray-light)"':''} onchange="atualizarResultado('${p.id}',this.value,document.getElementById('fin-com').value)">
+        </div>
+        <div class="form-group">
+          <label>Comissão Vendedor (R$/ton)</label>
+          <input id="fin-com" type="number" step="0.01" value="${p.comissaoPorTon||''}" placeholder="Ex: 50.00" ${finReadonly?'readonly style="background:var(--gray-light)"':''} onchange="atualizarResultado('${p.id}',document.getElementById('fin-custo').value,this.value)">
+        </div>
+      </div>
+      <div id="fin-preview-${p.id}" style="display:${p.custoPorTon?'grid':'none'};grid-template-columns:repeat(4,1fr);gap:.5rem;margin-top:.6rem">
+        ${p.custoPorTon?`
+        <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+          <div style="font-size:.65rem;color:var(--text-sec)">Receita</div>
+          <div style="font-weight:700;font-size:.82rem;color:var(--blue);font-family:'DM Mono',monospace">${fmtMoney(p.valorTotal)}</div>
+        </div>
+        <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+          <div style="font-size:.65rem;color:var(--text-sec)">Custo Total</div>
+          <div style="font-weight:700;font-size:.82rem;color:var(--red);font-family:'DM Mono',monospace">${fmtMoney(parseFloat(p.custoPorTon)*ton)}</div>
+        </div>
+        <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+          <div style="font-size:.65rem;color:var(--text-sec)">Comissão</div>
+          <div style="font-weight:700;font-size:.82rem;color:var(--amber);font-family:'DM Mono',monospace">${fmtMoney((parseFloat(p.comissaoPorTon)||0)*ton)}</div>
+        </div>
+        <div style="background:#fff;border:1px solid ${margemLiq>=0?'var(--green-mid)':'var(--red)'};border-radius:var(--radius);padding:.5rem;text-align:center">
+          <div style="font-size:.65rem;color:var(--text-sec)">Margem</div>
+          <div style="font-weight:700;font-size:.82rem;color:${margemLiq>=0?'var(--green)':'var(--red)'};font-family:'DM Mono',monospace">${fmtMoney(margemLiq)}</div>
+        </div>`:''
+        }
+      </div>
+      ${!finReadonly?`<div style="margin-top:.7rem;display:flex;justify-content:flex-end">
+        <button class="btn btn-primary btn-sm" onclick="salvarFinanceiro('${p.id}')">💾 Salvar valores</button>
+      </div>`:''}
+    </div>`:'';
+
   const conclusaoHTML=canConcluir?`
     <div class="conclusao-box">
       <div class="conclusao-title">📋 Dados obrigatórios para Concluir</div>
@@ -1130,10 +1231,12 @@ function openPedido(id){
     </tbody></table></div>
     <div style="text-align:right;font-weight:700;color:var(--green);font-size:1rem;margin-bottom:1rem;font-family:'DM Mono',monospace">TOTAL: ${fmtMoney(p.valorTotal)}</div>
     ${p.obs?`<div class="section-divider">Observações</div><div style="font-size:.82rem;background:var(--gray-light);padding:.55rem .8rem;border-radius:var(--radius);margin-bottom:.8rem">${p.obs}</div>`:''}
+    ${renderCamposFinanceiros(p,isMaster)}
     ${(p.nfNumero||p.loteNumero)?`<div class="section-divider">Dados do Embarque</div><div style="font-size:.82rem;line-height:1.8;background:var(--gray-light);padding:.55rem .8rem;border-radius:var(--radius);margin-bottom:.8rem">${p.nfNumero?`<b>NF:</b> ${p.nfNumero}<br>`:''}${p.loteNumero?`<b>Lote:</b> ${p.loteNumero}<br>`:''}${p.laudoDesc?`<b>Laudo:</b> ${p.laudoDesc}`:''}</div>`:''}
     <div class="section-divider">Arquivos</div>
     ${renderArquivos(p)}
     ${p.status==='aguardando_assinatura'?`<div style="margin-top:.5rem"><div class="upload-area" onclick="document.getElementById('up-assinado-${p.id}').click()"><input type="file" id="up-assinado-${p.id}" accept=".pdf,.jpg,.png" onchange="uploadArquivo('${p.id}','assinado',this)">✍️ Anexar pedido assinado pelo cliente</div></div>`:''}
+    ${finHTML}
     ${conclusaoHTML}
     ${canAprov||canValid?`<div class="form-group" style="margin-top:1rem"><label>Observação (opcional)</label><textarea id="aprov-nota" style="min-height:55px" placeholder="Adicione uma observação..."></textarea></div>`:''}
     <div class="section-divider">Histórico</div>
@@ -1503,6 +1606,158 @@ async function executarExclusao(pedidoId){
   closeModal('modal-pedido');
   toast('Pedido excluído definitivamente.','ok');
   navigate('pedidos');
+}
+
+function renderCamposFinanceiros(p, isMaster){
+  const statusFin=['aguardando_aprovacao','aguardando_assinatura','aguardando_validacao','aprovado_embarque','aguardando_pagamento','concluido'];
+  if(!statusFin.includes(p.status)) return '';
+  const ton=(p.itens||[]).reduce((a,it)=>a+(parseFloat(it.qtd)||0),0);
+  const custo=parseFloat(p.custoPorTon||0);
+  const comissao=parseFloat(p.comissaoPorTon||0);
+  const receita=p.valorTotal||0;
+  const totalCusto=custo*ton;
+  const totalCom=comissao*ton;
+  const margem=receita-totalCusto-totalCom;
+  const pctMargem=receita>0?(margem/receita*100).toFixed(1):0;
+  const temDados=custo>0||comissao>0;
+  const efetivo=p.status==='concluido';
+
+  const cor=efetivo?'var(--green)':'var(--amber)';
+  const label=efetivo?'✅ Resultado Efetivo':'🔮 Resultado Estimado';
+
+  const resumo=temDados?`
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;margin-top:.8rem">
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.55rem .7rem;text-align:center">
+        <div style="font-size:.63rem;color:var(--text-sec);text-transform:uppercase;letter-spacing:.4px">Receita</div>
+        <div style="font-weight:700;color:var(--blue);font-size:.82rem;font-family:'DM Mono',monospace">${fmtMoney(receita)}</div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.55rem .7rem;text-align:center">
+        <div style="font-size:.63rem;color:var(--text-sec);text-transform:uppercase;letter-spacing:.4px">Custo</div>
+        <div style="font-weight:700;color:var(--red);font-size:.82rem;font-family:'DM Mono',monospace">${fmtMoney(totalCusto)}</div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.55rem .7rem;text-align:center">
+        <div style="font-size:.63rem;color:var(--text-sec);text-transform:uppercase;letter-spacing:.4px">Comissão</div>
+        <div style="font-weight:700;color:var(--amber);font-size:.82rem;font-family:'DM Mono',monospace">${fmtMoney(totalCom)}</div>
+      </div>
+      <div style="background:${margem>=0?'#e8f5e9':'#fcebeb'};border:1px solid ${margem>=0?'var(--green-mid)':'#f5b5b5'};border-radius:var(--radius);padding:.55rem .7rem;text-align:center">
+        <div style="font-size:.63rem;color:var(--text-sec);text-transform:uppercase;letter-spacing:.4px">Margem</div>
+        <div style="font-weight:700;color:${margem>=0?'var(--green)':'var(--red)'};font-size:.82rem;font-family:'DM Mono',monospace">${fmtMoney(margem)} <span style="font-size:.68rem">(${pctMargem}%)</span></div>
+      </div>
+    </div>`:
+    `<div style="font-size:.78rem;color:var(--text-sec);font-style:italic;margin-top:.5rem">Preencha o custo e comissão para calcular o resultado.</div>`;
+
+  const campos=isMaster?`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.7rem;margin-top:.6rem">
+      <div class="form-group" style="margin:0">
+        <label>Custo de Compra (R$/ton)</label>
+        <input type="number" step="0.01" id="fin-custo-${p.id}" value="${custo||''}" placeholder="0,00"
+          oninput="previewFinanceiro('${p.id}',${ton})"
+          style="font-family:'DM Mono',monospace">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Comissão Vendedor (R$/ton)</label>
+        <input type="number" step="0.01" id="fin-com-${p.id}" value="${comissao||''}" placeholder="0,00"
+          oninput="previewFinanceiro('${p.id}',${ton})"
+          style="font-family:'DM Mono',monospace">
+      </div>
+    </div>
+    <div id="fin-preview-${p.id}" style="margin-top:.5rem">${resumo}</div>
+    <button class="btn btn-secondary btn-sm" style="margin-top:.6rem" onclick="salvarFinanceiro('${p.id}')">💾 Salvar valores financeiros</button>`
+  : (temDados?`<div id="fin-preview-${p.id}" style="margin-top:.5rem">${resumo}</div>`:'');
+
+  return `<div class="section-divider" style="color:${cor}">${label}</div>
+    <div style="background:${efetivo?'#e8f5e9':'#faeeda'};border:1px solid ${efetivo?'var(--green-mid)':'#f5c478'};border-radius:var(--radius);padding:.8rem 1rem">
+      <div style="font-size:.75rem;font-weight:700;color:${cor};margin-bottom:.3rem">${ton.toFixed(1)} ton · ${fmtMoney(receita)}</div>
+      ${campos}
+    </div>`;
+}
+
+function previewFinanceiro(pedId, ton){
+  const c=parseFloat(document.getElementById('fin-custo-'+pedId)?.value||0);
+  const com=parseFloat(document.getElementById('fin-com-'+pedId)?.value||0);
+  const p=DB.pedidos.find(x=>x.id===pedId);
+  const receita=p?.valorTotal||0;
+  const totalC=c*ton, totalCom=com*ton;
+  const margem=receita-totalC-totalCom;
+  const pct=receita>0?(margem/receita*100).toFixed(1):0;
+  const el=document.getElementById('fin-preview-'+pedId);
+  if(!el)return;
+  el.innerHTML=`
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;margin-top:.8rem">
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.55rem .7rem;text-align:center">
+        <div style="font-size:.63rem;color:var(--text-sec);text-transform:uppercase;letter-spacing:.4px">Receita</div>
+        <div style="font-weight:700;color:var(--blue);font-size:.82rem;font-family:'DM Mono',monospace">${fmtMoney(receita)}</div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.55rem .7rem;text-align:center">
+        <div style="font-size:.63rem;color:var(--text-sec);text-transform:uppercase;letter-spacing:.4px">Custo</div>
+        <div style="font-weight:700;color:var(--red);font-size:.82rem;font-family:'DM Mono',monospace">${fmtMoney(totalC)}</div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.55rem .7rem;text-align:center">
+        <div style="font-size:.63rem;color:var(--text-sec);text-transform:uppercase;letter-spacing:.4px">Comissão</div>
+        <div style="font-weight:700;color:var(--amber);font-size:.82rem;font-family:'DM Mono',monospace">${fmtMoney(totalCom)}</div>
+      </div>
+      <div style="background:${margem>=0?'#e8f5e9':'#fcebeb'};border:1px solid ${margem>=0?'var(--green-mid)':'#f5b5b5'};border-radius:var(--radius);padding:.55rem .7rem;text-align:center">
+        <div style="font-size:.63rem;color:var(--text-sec);text-transform:uppercase;letter-spacing:.4px">Margem</div>
+        <div style="font-weight:700;color:${margem>=0?'var(--green)':'var(--red)'};font-size:.82rem;font-family:'DM Mono',monospace">${fmtMoney(margem)} <span style="font-size:.68rem">(${pct}%)</span></div>
+      </div>
+    </div>`;
+}
+
+async function salvarFinanceiro(pedId){
+  const p=DB.pedidos.find(x=>x.id===pedId);
+  if(!p)return;
+  const custo=parseFloat(document.getElementById('fin-custo-'+pedId)?.value||0);
+  const com=parseFloat(document.getElementById('fin-com-'+pedId)?.value||0);
+  if(custo<0||com<0){toast('Valores não podem ser negativos.','err');return;}
+  const idx=DB.pedidos.findIndex(x=>x.id===pedId);
+  DB.pedidos[idx].custoPorTon=custo;
+  DB.pedidos[idx].comissaoPorTon=com;
+  await saveDB();
+  toast('Valores financeiros salvos!','ok');
+  openPedido(pedId);
+}
+
+async function salvarFinanceiro(pedId){
+  const custo=parseFloat(document.getElementById('fin-custo')?.value||0);
+  const com=parseFloat(document.getElementById('fin-com')?.value||0);
+  if(!custo){toast('Informe o custo de compra.','err');return;}
+  const idx=DB.pedidos.findIndex(p=>p.id===pedId);
+  DB.pedidos[idx].custoPorTon=custo;
+  DB.pedidos[idx].comissaoPorTon=com||0;
+  await saveDB();
+  toast('Valores financeiros salvos!','ok');
+  openPedido(pedId);
+}
+
+function atualizarResultado(pedId,custoVal,comVal){
+  const custo=parseFloat(custoVal)||0;
+  const com=parseFloat(comVal)||0;
+  const p=DB.pedidos.find(x=>x.id===pedId);
+  if(!p||!custo)return;
+  const ton=(p.itens||[]).reduce((a,it)=>a+(parseFloat(it.qtd)||0),0);
+  const totalCusto=custo*ton;
+  const totalCom=com*ton;
+  const margem=p.valorTotal-totalCusto-totalCom;
+  const prev=document.getElementById('fin-preview-'+pedId);
+  if(!prev)return;
+  prev.style.display='grid';
+  prev.innerHTML=`
+    <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+      <div style="font-size:.65rem;color:var(--text-sec)">Receita</div>
+      <div style="font-weight:700;font-size:.82rem;color:var(--blue);font-family:'DM Mono',monospace">${fmtMoney(p.valorTotal)}</div>
+    </div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+      <div style="font-size:.65rem;color:var(--text-sec)">Custo Total</div>
+      <div style="font-weight:700;font-size:.82rem;color:var(--red);font-family:'DM Mono',monospace">${fmtMoney(totalCusto)}</div>
+    </div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+      <div style="font-size:.65rem;color:var(--text-sec)">Comissão</div>
+      <div style="font-weight:700;font-size:.82rem;color:var(--amber);font-family:'DM Mono',monospace">${fmtMoney(totalCom)}</div>
+    </div>
+    <div style="background:#fff;border:1px solid ${margem>=0?'var(--green-mid)':'var(--red)'};border-radius:var(--radius);padding:.5rem;text-align:center">
+      <div style="font-size:.65rem;color:var(--text-sec)">Margem</div>
+      <div style="font-weight:700;font-size:.82rem;color:${margem>=0?'var(--green)':'var(--red)'};font-family:'DM Mono',monospace">${fmtMoney(margem)}</div>
+    </div>`;
 }
 
 function statusLabel(s){const m={
