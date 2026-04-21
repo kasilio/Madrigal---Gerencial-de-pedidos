@@ -368,6 +368,32 @@ function ensureDB(){
   if(!DB.clientes)DB.clientes=[];
   if(!DB.itens||!DB.itens.length)DB.itens=defaultItens();
   if(!DB.formas_pgto)DB.formas_pgto=['Antecipado','À vista no carregamento','À vista na descarga','A combinar'];
+  // Corrigir numeração de pedidos históricos conhecidos
+  const numFix = {
+    'cl-agrozacca': '001',
+    'cl-agrofarma': '002', 
+    'cl-dourado':   '003',
+    'cl-sanlac':    '004',
+  };
+  // Buscar também por nome do cliente para pedidos que não têm o ID seed
+  const nomeFix = {
+    'Agrozacca Alimentos LTDA':               '001',
+    'AGROFARMA':                              '002',
+    'COMERCIAL AGROPECUÁRIA DOURADO LTDA':    '003',
+    'COMERCIAL AGROPECUARIA DOURADO LTDA':    '003',
+    'SAN LAC':                                '004',
+    'San Lac':                                '004',
+    'SAN LAC – TECNOLOGIA':                   '004',
+  };
+  let numChanged = false;
+  DB.pedidos.forEach(p=>{
+    const fixById = numFix[p.clienteId];
+    const fixByName = Object.keys(nomeFix).find(k=>p.clienteNome&&p.clienteNome.toUpperCase().includes(k.toUpperCase()));
+    const novoNum = fixById || (fixByName ? nomeFix[fixByName] : null);
+    if(novoNum && p.numero !== novoNum){ p.numero = novoNum; numChanged = true; }
+  });
+  if(numChanged) saveLocal();
+
   // Normalizar status de pedidos vindos de outros formatos
   const statusMap={'ag_aprovacao':'aguardando_aprovacao','aprovado_assinatura':'aguardando_assinatura','ag_assinatura':'aguardando_assinatura','validar_assinatura':'aguardando_validacao','lib_embarque':'aprovado_embarque','ag_pagamento':'aguardando_pagamento','ag_embarque':'aprovado_embarque'};
   DB.pedidos.forEach(p=>{if(statusMap[p.status])p.status=statusMap[p.status];});
@@ -1902,6 +1928,18 @@ async function seedPedidosHistoricos(){
   } else {
     toast('Pedidos históricos já estão no sistema.','ok');
   }
+}
+
+// Utilitário de renumeração (uso único via console)
+async function renumerarPedido(pedidoId, novoNumero){
+  const idx = DB.pedidos.findIndex(p=>p.id===pedidoId);
+  if(idx<0){console.error('Pedido não encontrado:',pedidoId);return;}
+  DB.pedidos[idx].numero = String(novoNumero).padStart(3,'0');
+  await saveDB();
+  console.log('Renumerado:',pedidoId,'->',DB.pedidos[idx].numero);
+}
+async function listarPedidos(){
+  DB.pedidos.forEach(p=>console.log(p.id, 'PV-'+String(p.numero).padStart(3,'0'), p.clienteNome, p.status));
 }
 
 initApp();
