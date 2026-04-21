@@ -1298,7 +1298,8 @@ function openPedido(id){
     ${assinaturaUpHTML}
     ${agPgtoHTML}
     ${agEmbarqueHTML}
-    <div class="section-divider">Arquivos</div>
+    <div class="section-divider">Arquivos do Pedido</div>
+    ${st==='concluido'?`<div style="margin-bottom:.5rem"><button class="btn btn-secondary btn-sm" onclick="gerarPDF('${p.id}')">📄 PDF do Pedido (original)</button></div>`:''}
     ${renderArquivos(p)}
     ${reprovInput}
     <div class="section-divider">Histórico</div>
@@ -1427,44 +1428,49 @@ async function concluirPedido(id){
 
 function renderArquivos(p){
   const arqs=p.arquivos||[];
-  if(!arqs.length)return'<div style="font-size:.8rem;color:var(--text-sec)">Nenhum arquivo anexado.</div>';
-  const labels={assinado:'Pedido Assinado (cliente)',nf_fornecedor:'NF Fornecedor',nf_venda:'NF Venda',laudo:'Laudo',comprovante:'Comprovante de Pagamento'};
+  if(!arqs.length)return'<div style="font-size:.82rem;color:var(--text-sec);padding:.3rem 0">Nenhum arquivo anexado ainda.</div>';
+  const labels={assinado:'Pedido Assinado',nf_fornecedor:'NF Fornecedor',nf_venda:'NF Venda',laudo:'Laudo',comprovante:'Comprovante de Pagto'};
   const icons={assinado:'✍️',nf_fornecedor:'🧾',nf_venda:'🧾',laudo:'📄',comprovante:'💰'};
-  const isConcluido=p.status==='concluido';
-  return'<div>'+arqs.map(a=>`
-    <div class="file-item">
-      <span>${icons[a.tipo]||'📎'}</span>
-      <span class="file-name">${labels[a.tipo]||a.tipo}: ${a.nome}</span>
-      <span style="font-size:.7rem;color:var(--text-sec);margin-left:auto">${a.data}</span>
-      ${isConcluido&&a.b64?`<button class="btn btn-secondary btn-sm" style="padding:.15rem .5rem;font-size:.7rem" onclick="downloadArquivo('${a.nome}','${a.b64}')">⬇</button>`:''}
+  return '<div style="display:flex;flex-direction:column;gap:.35rem">'+arqs.map(a=>`
+    <div class="file-item" style="gap:.6rem;align-items:center">
+      <span style="font-size:1rem;flex-shrink:0">${icons[a.tipo]||'📎'}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:.8rem">${labels[a.tipo]||a.tipo}</div>
+        <div style="font-size:.72rem;color:var(--text-sec);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.nome}</div>
+      </div>
+      <span style="font-size:.68rem;color:var(--text-sec);flex-shrink:0">${a.data}</span>
+      <div style="display:flex;gap:.3rem;flex-shrink:0">
+        ${a.b64
+          ? `<button class="btn btn-secondary btn-sm" style="padding:.2rem .55rem;font-size:.75rem" title="Visualizar" onclick="visualizarArquivo('${p.id}','${a.tipo}')">👁 Ver</button>
+             <button class="btn btn-secondary btn-sm" style="padding:.2rem .55rem;font-size:.75rem" title="Baixar" onclick="downloadArquivoLocal('${p.id}','${a.tipo}')">⬇ Baixar</button>`
+          : '<span style="font-size:.7rem;color:var(--text-sec);font-style:italic">indisponível</span>'
+        }
+      </div>
     </div>`).join('')+'</div>';
 }
 
-function downloadArquivo(nome, b64){
+
+function downloadArquivoLocal(pedId, tipo){
+  const p=DB.pedidos.find(x=>x.id===pedId);
+  const arq=p?.arquivos?.find(a=>a.tipo===tipo);
+  if(!arq?.b64){toast('Arquivo não disponível. Abra o app no dispositivo onde ele foi anexado.','err');return;}
   const a=document.createElement('a');
-  a.href=b64; a.download=nome; a.click();
+  a.href=arq.b64; a.download=arq.nome; a.click();
 }
 
-async function acaoPedido(id,novoStatus,nota){
-  const notaEl=document.getElementById('aprov-nota');
-  const notaFinal=(notaEl?notaEl.value.trim():'')||nota;
-  const idx=DB.pedidos.findIndex(p=>p.id===id);
-  DB.pedidos[idx].status=novoStatus;
-  addHistorico(id,novoStatus,notaFinal,currentUser.nome);
-  await saveDB();closeModal('modal-pedido');toast('Status: '+statusLabel(novoStatus),'ok');navigate('pedidos');
+function visualizarArquivo(pedId, tipo){
+  const p=DB.pedidos.find(x=>x.id===pedId);
+  const arq=p?.arquivos?.find(a=>a.tipo===tipo);
+  if(!arq?.b64){toast('Arquivo não disponível localmente.','err');return;}
+  const win=window.open();
+  if(!win){toast('Permita pop-ups no navegador para visualizar.','err');return;}
+  if(arq.b64.startsWith('data:image')){
+    win.document.write(`<!DOCTYPE html><html><head><title>${arq.nome}</title></head><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${arq.b64}" style="max-width:100%;max-height:100vh;object-fit:contain"></body></html>`);
+  } else {
+    win.document.write(`<!DOCTYPE html><html><head><title>${arq.nome}</title></head><body style="margin:0"><embed src="${arq.b64}" type="application/pdf" style="width:100%;height:100vh"><p style="font-family:sans-serif;padding:1rem">Se o arquivo não abrir, <a href="${arq.b64}" download="${arq.nome}">clique aqui para baixar</a>.</p></body></html>`);
+  }
 }
 
-async function uploadArquivo(pedId,tipo,input){
-  if(!input.files||!input.files[0])return;
-  const file=input.files[0];
-  const idx=DB.pedidos.findIndex(p=>p.id===pedId);
-  if(!DB.pedidos[idx].arquivos)DB.pedidos[idx].arquivos=[];
-  DB.pedidos[idx].arquivos=DB.pedidos[idx].arquivos.filter(a=>a.tipo!==tipo);
-  DB.pedidos[idx].arquivos.push({tipo,nome:file.name,data:dateStr()});
-  if(tipo==='assinado'){DB.pedidos[idx].status='validar_assinatura';addHistorico(pedId,'validar_assinatura',`PDF assinado anexado: ${file.name}`,currentUser.nome);}
-  else addHistorico(pedId,DB.pedidos[idx].status,`Arquivo (${tipo}): ${file.name}`,currentUser.nome);
-  await saveDB();toast('Arquivo registrado!','ok');openPedido(pedId);
-}
 
 // ===================== PDF =====================
 function gerarPDF(id){
