@@ -670,7 +670,7 @@ function renderDashboard(c){
   <div class="card"><div class="card-title">Pedidos Recentes</div>
     ${DB.pedidos.slice(-5).reverse().map(p=>`
     <div class="pedido-row" onclick="openPedido('${p.id}')" style="grid-template-columns:80px 1fr 155px 115px">
-      <span class="pedido-num">PV-${p.numero}</span>
+      <span class="pedido-num">PV-${String(p.numero).padStart(3,'0')}</span>
       <span class="pedido-cliente">${p.clienteNome}</span>
       <span class="status-badge s-${p.status}">${statusLabel(p.status)}</span>
       <span class="pedido-valor">${fmtMoney(p.valorTotal)}</span>
@@ -923,7 +923,7 @@ function renderPedidos(c){
     ${filtered.length===0?'<div class="card" style="color:var(--text-sec);text-align:center;padding:2rem">Nenhum pedido encontrado.</div>':''}
     ${filtered.map(p=>`
     <div class="pedido-row" onclick="openPedido('${p.id}')">
-      <span class="pedido-num">PV-${p.numero}</span>
+      <span class="pedido-num">PV-${String(p.numero).padStart(3,'0')}</span>
       <div><div class="pedido-cliente">${p.clienteNome}</div><div style="font-size:.73rem;color:var(--text-sec)">${(p.itens||[]).map(i=>i.nome).join(', ')}</div></div>
       <span class="pedido-data">${p.dataPedido}</span>
       <span class="pedido-valor">${fmtMoney(p.valorTotal)}</span>
@@ -961,7 +961,7 @@ function renderPedidoCardMob(p){
   div.onclick=()=>openPedido(p.id);
   div.innerHTML=`
     <div class="pcm-top">
-      <span class="pcm-num">PV-${p.numero}</span>
+      <span class="pcm-num">PV-${String(p.numero).padStart(3,'0')}</span>
       <span class="status-badge s-${p.status}">${statusLabel(p.status)}</span>
     </div>
     <div class="pcm-cliente">${(()=>{const cl=DB.clientes.find(c=>c.id===p.clienteId);return cl?.codigo?`<span style="font-family:'DM Mono',monospace;font-size:.72rem;color:var(--green);font-weight:700;background:var(--green-light);padding:.05rem .3rem;border-radius:4px;margin-right:.3rem">${cl.codigo}</span>`:''})()}${p.clienteNome}</div>
@@ -1131,7 +1131,7 @@ async function salvarPedido(editId){
   }
   await saveDB();toast('Pedido enviado para aprovação!','ok');navigate('pedidos');
 }
-function nextNumero(){const nums=DB.pedidos.map(p=>parseInt(p.numero)||0);const max=nums.length>0?Math.max(...nums):4;return String(max+1).padStart(3,'0');}
+function nextNumero(){const nums=DB.pedidos.map(p=>parseInt(p.numero)||0).filter(n=>n>0);const max=nums.length>0?Math.max(...nums):0;return String(max+1).padStart(3,'0');}
 
 // ===================== VER PEDIDO =====================
 function openPedido(id){
@@ -1143,7 +1143,7 @@ function openPedido(id){
   const canDownload=['aprovado_assinatura','aguardando_assinatura','aguardando_validacao','aprovado_embarque','aguardando_pagamento','concluido'].includes(p.status);
   const canConcluir=isMaster&&p.status==='aprovado_embarque';
   const cl=DB.clientes.find(c=>c.id===p.clienteId)||{razaoSocial:p.clienteNome,cnpj:'-',ie:'-',endereco:'-',cidade:'-',uf:'-',cep:'-'};
-  document.getElementById('modal-pedido-title').textContent=`PV-${p.numero} — ${p.clienteNome}`;
+  document.getElementById('modal-pedido-title').textContent=`PV-${String(p.numero).padStart(3,'0')} — ${p.clienteNome}`;
 
   // Bloco financeiro: master pode preencher a partir de aguardando_aprovacao
   const statusComFin=['aguardando_aprovacao','aguardando_assinatura','aguardando_validacao','aprovado_embarque','aguardando_pagamento','concluido'];
@@ -1213,9 +1213,16 @@ function openPedido(id){
     </div>`:'';
 
   document.getElementById('modal-pedido-body').innerHTML=`
-    <div class="alert alert-info" style="margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.4rem">
+    <div class="alert alert-info" style="margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.6rem">
       <span>Status: <strong>${statusLabel(p.status)}</strong></span>
-      <span style="font-size:.8rem;opacity:.85">👤 Vendedor: <strong>${p.vendedorNome||'-'}</strong></span>
+      <div style="display:flex;align-items:center;gap:.4rem;font-size:.8rem">
+        <span>👤</span>
+        ${isMaster
+          ? `<select id="sel-vend-${p.id}" style="font-size:.78rem;padding:.2rem .45rem;border:1px solid var(--border);border-radius:var(--radius);font-family:var(--font)" onchange="trocarVendedor('${p.id}',this.value)">
+              ${DB.users.filter(u=>u.ativo).map(u=>`<option value="${u.id}" ${u.id===p.vendedorId?'selected':''}>${u.role==='master'?'👑 ':''}${u.nome}</option>`).join('')}
+             </select>`
+          : `<strong>${p.vendedorNome||'-'}</strong>`}
+      </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
       <div><div class="section-divider" style="margin-top:0">Cliente</div>
@@ -1385,7 +1392,7 @@ function gerarPDF(id){
   doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(11);
   doc.text('PEDIDO DE VENDA',170,43.5,{align:'center'});
   doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(165,214,167);
-  doc.text(`Nº PV-${p.numero}  |  ${p.dataPedido}`,170,49,{align:'center'});
+  doc.text(`Nº PV-${String(p.numero).padStart(3,'0')}  |  ${p.dataPedido}`,170,49,{align:'center'});
   let y=60;
   function secTitle(t){doc.setFillColor(26,94,42);doc.rect(M,y-5,CW,7,'F');doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(8.5);doc.text(t,M+2,y);y+=10;}
   function dualLine(l1,v1,l2,v2,lw1,col2,lw2,bg){
@@ -1441,7 +1448,7 @@ function gerarPDF(id){
   doc.setFillColor(26,94,42);doc.rect(0,287,W,10,'F');
   doc.setTextColor(165,214,167);doc.setFont('helvetica','normal');doc.setFontSize(7);
   doc.text('Madrigal Agronegócios LTDA  |  São José dos Pinhais – PR',W/2,293,{align:'center'});
-  doc.save(`PV-${p.numero}_${cl.razaoSocial.replace(/[^a-zA-Z0-9]/g,'_').substring(0,20)}.pdf`);
+  doc.save(`PV-${String(p.numero).padStart(3,'0')}_${cl.razaoSocial.replace(/[^a-zA-Z0-9]/g,'_').substring(0,20)}.pdf`);
   toast('PDF gerado!','ok');
 }
 function fmtMS(v){return'R$ '+Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -1703,6 +1710,18 @@ function previewFinanceiro(pedId, ton){
     </div>`;
 }
 
+async function trocarVendedor(pedId, novoVendedorId){
+  const novoVend = DB.users.find(u=>u.id===novoVendedorId);
+  if(!novoVend) return;
+  const idx = DB.pedidos.findIndex(p=>p.id===pedId);
+  if(idx<0) return;
+  const nomeAntigo = DB.pedidos[idx].vendedorNome;
+  DB.pedidos[idx].vendedorId = novoVend.id;
+  DB.pedidos[idx].vendedorNome = novoVend.nome;
+  await saveDB();
+  toast(`Vendedor alterado para ${novoVend.nome}`, 'ok');
+}
+
 async function salvarFinanceiro(pedId){
   const p=DB.pedidos.find(x=>x.id===pedId);
   if(!p)return;
@@ -1715,6 +1734,18 @@ async function salvarFinanceiro(pedId){
   await saveDB();
   toast('Valores financeiros salvos!','ok');
   openPedido(pedId);
+}
+
+async function trocarVendedor(pedId, novoVendedorId){
+  const novoVend = DB.users.find(u=>u.id===novoVendedorId);
+  if(!novoVend) return;
+  const idx = DB.pedidos.findIndex(p=>p.id===pedId);
+  if(idx<0) return;
+  const nomeAntigo = DB.pedidos[idx].vendedorNome;
+  DB.pedidos[idx].vendedorId = novoVend.id;
+  DB.pedidos[idx].vendedorNome = novoVend.nome;
+  await saveDB();
+  toast(`Vendedor alterado para ${novoVend.nome}`, 'ok');
 }
 
 async function salvarFinanceiro(pedId){
