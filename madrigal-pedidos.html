@@ -77,14 +77,22 @@ textarea{resize:vertical;min-height:80px}
 .pedido-data{font-size:.77rem;color:var(--text-sec)}
 .status-badge{font-size:.68rem;font-weight:700;padding:.22rem .6rem;border-radius:20px;text-align:center;white-space:nowrap;letter-spacing:.2px}
 .s-digitado{background:#e8f5e9;color:#1a5e2a}
-.s-aguardando_aprovacao{background:var(--amber-light);color:var(--amber)}
+.s-aguardando_aprovacao,.s-ag_aprovacao{background:var(--amber-light);color:var(--amber)}
 .s-aprovado_assinatura{background:var(--blue-light);color:var(--blue)}
+.s-aguardando_assinatura,.s-ag_assinatura{background:var(--blue-light);color:var(--blue)}
+.s-aguardando_validacao,.s-validar_assinatura{background:var(--amber-light);color:var(--amber)}
+.s-aprovado_embarque,.s-lib_embarque,.s-ag_embarque{background:#e8f5e9;color:#1a5e2a}
+.s-aguardando_pagamento,.s-ag_pagamento{background:var(--amber-light);color:var(--amber)}
+.s-concluido{background:#d3d1c7;color:#444}
+.s-cancelado{background:var(--red-light);color:var(--red)}
+.s-aguardando_aprovacao{background:var(--amber-light);color:var(--amber)}
 .s-aguardando_assinatura{background:var(--blue-light);color:var(--blue)}
 .s-aguardando_validacao{background:var(--amber-light);color:var(--amber)}
 .s-aprovado_embarque{background:#e8f5e9;color:#1a5e2a}
 .s-aguardando_pagamento{background:var(--amber-light);color:var(--amber)}
-.s-concluido{background:#d3d1c7;color:#444}
-.s-cancelado{background:var(--red-light);color:var(--red)}
+.s-lib_embarque{background:#e8f5e9;color:#1a5e2a}
+.s-validar_assinatura{background:var(--amber-light);color:var(--amber)}
+.s-reprovado{background:var(--red-light);color:var(--red)}
 /* FORM */
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
 .form-row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem}
@@ -344,12 +352,27 @@ function defaultItens(){return[
 
 function saveLocal(){try{localStorage.setItem(LOCAL_KEY,JSON.stringify(DB));}catch(e){}}
 
+// Mapa de aliases para normalizar status vindos de versões antigas ou do Firebase
+const STATUS_ALIAS={
+  'ag_aprovacao':'aguardando_aprovacao',
+  'ag_assinatura':'aguardando_assinatura',
+  'validar_assinatura':'aguardando_validacao',
+  'lib_embarque':'aprovado_embarque',
+  'ag_embarque':'aprovado_embarque',
+  'ag_pagamento':'aguardando_pagamento',
+};
+
 function ensureDB(){
   if(!DB.users)DB.users=[];
   if(!DB.pedidos)DB.pedidos=[];
   if(!DB.clientes)DB.clientes=[];
   if(!DB.itens||!DB.itens.length)DB.itens=defaultItens();
   if(!DB.formas_pgto)DB.formas_pgto=['Antecipado','À vista no carregamento','À vista na descarga','A combinar'];
+  // Normalizar status de pedidos vindos de outros formatos
+  const statusMap={'ag_aprovacao':'aguardando_aprovacao','aprovado_assinatura':'aguardando_assinatura','ag_assinatura':'aguardando_assinatura','validar_assinatura':'aguardando_validacao','lib_embarque':'aprovado_embarque','ag_pagamento':'aguardando_pagamento','ag_embarque':'aprovado_embarque'};
+  DB.pedidos.forEach(p=>{if(statusMap[p.status])p.status=statusMap[p.status];});
+  // Normalizar aliases de status
+  DB.pedidos.forEach(p=>{if(STATUS_ALIAS[p.status])p.status=STATUS_ALIAS[p.status];});
   const sc={'cl-agrozacca':'00001','cl-gtfab':'00002','cl-agrofarma':'00003','cl-dourado':'00004'};
   let m=false;
   DB.clientes.forEach(cl=>{if(!cl.codigo){if(sc[cl.id]){cl.codigo=sc[cl.id];m=true;}}});
@@ -1482,7 +1505,25 @@ async function executarExclusao(pedidoId){
   navigate('pedidos');
 }
 
-function statusLabel(s){const m={digitado:'Digitado',aguardando_aprovacao:'Aguard. Aprovação',aprovado_assinatura:'Aprov. p/ Assinatura',aguardando_assinatura:'Aguard. Assinatura',aguardando_validacao:'Aguard. Validação',aprovado_embarque:'Aprov. p/ Embarque',aguardando_pagamento:'Aguard. Pagamento',concluido:'Concluído',cancelado:'Cancelado'};return m[s]||s;}
+function statusLabel(s){const m={
+  digitado:'Digitado',
+  ag_aprovacao:'Aguard. Aprovação',aguardando_aprovacao:'Aguard. Aprovação',
+  aprovado_assinatura:'Aprov. p/ Assinatura',
+  ag_assinatura:'Aguard. Assinatura',aguardando_assinatura:'Aguard. Assinatura',
+  validar_assinatura:'Validar Assinatura',aguardando_validacao:'Aguard. Validação',
+  lib_embarque:'Liberado p/ Embarque',aprovado_embarque:'Aprov. p/ Embarque',
+  ag_pagamento:'Aguard. Pagamento',aguardando_pagamento:'Aguard. Pagamento',
+  ag_embarque:'Aguard. Embarque',
+  concluido:'Concluído',cancelado:'Cancelado',reprovado:'Reprovado'
+};return m[s]||s;}
+function normalizeStatus(s){const m={
+  ag_aprovacao:'aguardando_aprovacao',
+  ag_assinatura:'aguardando_assinatura',
+  validar_assinatura:'aguardando_validacao',
+  lib_embarque:'aprovado_embarque',
+  ag_pagamento:'aguardando_pagamento',
+  ag_embarque:'aprovado_embarque'
+};return m[s]||s;}
 function fmtMoney(v){return'R$ '+Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 function now(){return new Date().toLocaleString('pt-BR');}
