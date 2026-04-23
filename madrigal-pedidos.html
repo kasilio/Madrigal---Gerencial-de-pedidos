@@ -550,6 +550,14 @@ function showApp(){
     if(bnCl)bnCl.style.display='none';
   }
   navigate(currentUser.role==='master'?'dashboard':'pedidos');
+  // Se não tem pedidos, tenta sincronizar da nuvem automaticamente
+  if(DB.pedidos.length===0){
+    setTimeout(async()=>{
+      toast('Sincronizando dados da nuvem... ☁️','ok');
+      await loadDB();
+      navigate(currentUser.role==='master'?'dashboard':'pedidos');
+    },500);
+  }
 }
 
 function navigate(page){
@@ -1509,6 +1517,486 @@ function renderArquivos(p){
 }
 
 
+
+// ===================== UTILITÁRIOS BASE =====================
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+function now(){return new Date().toISOString();}
+function dateStr(){const d=new Date();return d.toLocaleDateString('pt-BR');}
+function parseDate(s){if(!s)return null;const p=s.split('/');if(p.length===3)return new Date(p[2],p[1]-1,p[0]);const d=new Date(s);return isNaN(d)?null:d;}
+function fmtMoney(v){return(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});}
+function maskCPF(cpf){return cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4');}
+function addHistoricoObj(p,status,nota,usuario){if(!p.historico)p.historico=[];p.historico.push({status,nota,usuario,data:dateStr()});}
+function addHistorico(pedId,status,nota,usuario){const idx=DB.pedidos.findIndex(p=>p.id===pedId);if(idx<0)return;addHistoricoObj(DB.pedidos[idx],status,nota,usuario);}
+
+// ===================== AÇÕES DE PEDIDO =====================
+async function acaoPedido(pedId,novoStatus,nota){
+  const idx=DB.pedidos.findIndex(p=>p.id===pedId);if(idx<0)return;
+  DB.pedidos[idx].status=novoStatus;
+  addHistorico(pedId,novoStatus,nota,currentUser.nome);
+  await saveDB();
+  closeModal('modal-pedido');
+  toast(nota||'Status atualizado.','ok');
+  navigate('pedidos');
+}
+
+async function confirmarAcaoMaster(acao,pedId,nota){
+  if(acao==='cancelar'){
+    const just=document.getElementById('just-nota')?.value?.trim();
+    if(!just){toast('Informe a justificativa para cancelar.','err');return;}
+    const idx=DB.pedidos.findIndex(p=>p.id===pedId);
+    DB.pedidos[idx].status='cancelado';
+    addHistorico(pedId,'cancelado','[CANCELADO] '+just,currentUser.nome);
+    await saveDB();closeModal('modal-pedido');toast('Pedido cancelado.','ok');navigate('pedidos');
+  }
+}
+
+async function confirmarExclusao(pedId){
+  if(!confirm('Excluir permanentemente este pedido?'))return;
+  executarExclusao(pedId);
+}
+
+async function executarExclusao(pedId){
+  DB.pedidos=DB.pedidos.filter(p=>p.id!==pedId);
+  await saveDB();closeModal('modal-pedido');toast('Pedido excluído.','ok');navigate('pedidos');
+}
+
+function closeModal(id){document.getElementById(id)?.classList.add('hidden');}
+
+// ===================== RESULTADO FINANCEIRO =====================
+function renderCamposFinanceiros(p,ton,readonly){
+  const margemLiq=ton>0&&p.custoPorTon&&p.comissaoPorTon
+    ?(p.valorTotal||0)-(parseFloat(p.custoPorTon)*ton)-(parseFloat(p.comissaoPorTon)*ton):null;
+  return `<div class="conclusao-box" style="border-color:var(--green);margin-bottom:.8rem">
+    <div class="conclusao-title" style="color:var(--green)">💰 Resultado Financeiro ${readonly?'(confirmado)':'(estimado)'}</div>
+    <div class="form-row">
+      <div class="form-group"><label>Custo de Compra (R$/ton) *</label>
+        <input id="fin-custo" type="number" step="0.01" value="${p.custoPorTon||''}" placeholder="Ex: 3800.00"
+          ${readonly?'readonly style="background:var(--gray-light)"':''}
+          onchange="atualizarResultado('${p.id}',this.value,document.getElementById('fin-com').value)">
+      </div>
+      <div class="form-group"><label>Comissão Vendedor (R$/ton)</label>
+        <input id="fin-com" type="number" step="0.01" value="${p.comissaoPorTon||''}" placeholder="Ex: 50.00"
+          ${readonly?'readonly style="background:var(--gray-light)"':''}
+          onchange="atualizarResultado('${p.id}',document.getElementById('fin-custo').value,this.value)">
+      </div>
+    </div>
+    <div id="fin-preview-${p.id}" style="display:${p.custoPorTon?'grid':'none'};grid-template-columns:repeat(4,1fr);gap:.5rem;margin-top:.6rem">
+      ${p.custoPorTon?`
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+        <div style="font-size:.65rem;color:var(--text-sec)">Receita</div>
+        <div style="font-weight:700;font-size:.82rem;color:var(--blue);font-family:'DM Mono',monospace">${fmtMoney(p.valorTotal)}</div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+        <div style="font-size:.65rem;color:var(--text-sec)">Custo Total</div>
+        <div style="font-weight:700;font-size:.82rem;color:var(--red);font-family:'DM Mono',monospace">${fmtMoney(parseFloat(p.custoPorTon)*ton)}</div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+        <div style="font-size:.65rem;color:var(--text-sec)">Comissão</div>
+        <div style="font-weight:700;font-size:.82rem;color:var(--amber);font-family:'DM Mono',monospace">${fmtMoney((parseFloat(p.comissaoPorTon)||0)*ton)}</div>
+      </div>
+      <div style="background:#fff;border:1px solid ${margemLiq>=0?'var(--green-mid)':'var(--red)'};border-radius:var(--radius);padding:.5rem;text-align:center">
+        <div style="font-size:.65rem;color:var(--text-sec)">Margem</div>
+        <div style="font-weight:700;font-size:.82rem;color:${margemLiq>=0?'var(--green)':'var(--red)'};font-family:'DM Mono',monospace">${fmtMoney(margemLiq)}</div>
+      </div>`:''}
+    </div>
+    ${!readonly?`<div style="margin-top:.7rem;display:flex;justify-content:flex-end">
+      <button class="btn btn-primary btn-sm" onclick="salvarFinanceiro('${p.id}')">💾 Salvar valores</button>
+    </div>`:''}
+  </div>`;
+}
+
+async function salvarFinanceiro(pedId){
+  const custo=parseFloat(document.getElementById('fin-custo')?.value||0);
+  const com=parseFloat(document.getElementById('fin-com')?.value||0);
+  if(!custo){toast('Informe o custo de compra.','err');return;}
+  const idx=DB.pedidos.findIndex(p=>p.id===pedId);
+  DB.pedidos[idx].custoPorTon=custo;
+  DB.pedidos[idx].comissaoPorTon=com||0;
+  await saveDB();toast('Valores financeiros salvos!','ok');openPedido(pedId);
+}
+
+function atualizarResultado(pedId,custoVal,comVal){
+  const custo=parseFloat(custoVal)||0;const com=parseFloat(comVal)||0;
+  const p=DB.pedidos.find(x=>x.id===pedId);if(!p||!custo)return;
+  const ton=(p.itens||[]).reduce((a,it)=>a+(parseFloat(it.qtd)||0),0);
+  const totalCusto=custo*ton;const totalCom=com*ton;const margem=(p.valorTotal||0)-totalCusto-totalCom;
+  const prev=document.getElementById('fin-preview-'+pedId);if(!prev)return;
+  prev.style.display='grid';
+  prev.innerHTML=`
+    <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+      <div style="font-size:.65rem;color:var(--text-sec)">Receita</div>
+      <div style="font-weight:700;font-size:.82rem;color:var(--blue);font-family:'DM Mono',monospace">${fmtMoney(p.valorTotal)}</div>
+    </div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+      <div style="font-size:.65rem;color:var(--text-sec)">Custo Total</div>
+      <div style="font-weight:700;font-size:.82rem;color:var(--red);font-family:'DM Mono',monospace">${fmtMoney(totalCusto)}</div>
+    </div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+      <div style="font-size:.65rem;color:var(--text-sec)">Comissão</div>
+      <div style="font-weight:700;font-size:.82rem;color:var(--amber);font-family:'DM Mono',monospace">${fmtMoney(totalCom)}</div>
+    </div>
+    <div style="background:#fff;border:1px solid ${margem>=0?'var(--green-mid)':'var(--red)'};border-radius:var(--radius);padding:.5rem;text-align:center">
+      <div style="font-size:.65rem;color:var(--text-sec)">Margem</div>
+      <div style="font-weight:700;font-size:.82rem;color:${margem>=0?'var(--green)':'var(--red)'};font-family:'DM Mono',monospace">${fmtMoney(margem)}</div>
+    </div>`;
+}
+
+// ===================== RESOLVER ARQUIVO =====================
+async function resolverArquivo(pedId,tipo){
+  const p=DB.pedidos.find(x=>x.id===pedId);
+  const arq=p?.arquivos?.find(a=>a.tipo===tipo);
+  if(!arq){toast('Arquivo não encontrado.','err');return null;}
+  if(arq.b64) return arq;
+  toast('Buscando na nuvem... ☁️','ok');
+  const b64=await carregarArquivoNuvem(pedId,tipo);
+  if(b64){
+    const idx=DB.pedidos.findIndex(x=>x.id===pedId);
+    const arqIdx=DB.pedidos[idx].arquivos.findIndex(a=>a.tipo===tipo);
+    DB.pedidos[idx].arquivos[arqIdx].b64=b64;
+    saveLocal();
+    return {...arq,b64};
+  }
+  toast('Arquivo não disponível. Refaça o upload.','err');
+  return null;
+}
+
+async function downloadArquivoLocal(pedId,tipo){
+  const arq=await resolverArquivo(pedId,tipo);if(!arq)return;
+  const a=document.createElement('a');a.href=arq.b64;a.download=arq.nome;a.click();
+}
+
+async function visualizarArquivo(pedId,tipo){
+  const arq=await resolverArquivo(pedId,tipo);if(!arq)return;
+  const win=window.open();
+  if(!win){toast('Permita pop-ups no navegador.','err');return;}
+  if(arq.b64.startsWith('data:image')){
+    win.document.write(`<!DOCTYPE html><html><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${arq.b64}" style="max-width:100%;max-height:100vh"></body></html>`);
+  }else{
+    win.document.write(`<!DOCTYPE html><html><body style="margin:0"><embed src="${arq.b64}" type="application/pdf" style="width:100%;height:100vh"><p style="font-family:sans-serif;padding:1rem">Se não abrir, <a href="${arq.b64}" download="${arq.nome}">clique aqui</a>.</p></body></html>`);
+  }
+}
+
+// ===================== CLIENTES =====================
+async function renderClientes(c){
+  c.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <div class="card-title" style="margin:0">Clientes</div>
+      <button class="btn btn-primary btn-sm" onclick="openCadastroCliente()">+ Novo Cliente</button>
+    </div>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Código</th><th>Razão Social</th><th>CNPJ</th><th>Cidade/UF</th><th></th></tr></thead>
+      <tbody>${DB.clientes.map(cl=>`<tr>
+        <td><span style="font-family:'DM Mono',monospace;font-size:.85rem;font-weight:700;color:var(--green)">${cl.codigo||'?'}</span></td>
+        <td style="font-weight:600">${cl.razaoSocial}</td>
+        <td style="font-family:'DM Mono',monospace;font-size:.8rem">${cl.cnpj}</td>
+        <td>${cl.cidade||'-'}/${cl.uf||'-'}</td>
+        <td><button class="btn btn-secondary btn-sm" onclick="openCadastroCliente('${cl.id}')">Editar</button></td>
+      </tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--text-sec)">Nenhum cliente cadastrado.</td></tr>'}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
+function openCadastroCliente(id){
+  const cl=id?DB.clientes.find(c=>c.id===id):{};
+  document.getElementById('modal-cliente-title').textContent=id?'Editar Cliente':'Novo Cliente';
+  document.getElementById('mc-id').value=id||'';
+  document.getElementById('mc-razao').value=cl.razaoSocial||'';
+  document.getElementById('mc-cnpj').value=cl.cnpj||'';
+  document.getElementById('mc-ie').value=cl.ie||'';
+  document.getElementById('mc-end').value=cl.endereco||'';
+  document.getElementById('mc-cidade').value=cl.cidade||'';
+  document.getElementById('mc-uf').value=cl.uf||'';
+  document.getElementById('mc-cep').value=cl.cep||'';
+  document.getElementById('modal-cliente').classList.remove('hidden');
+}
+
+async function buscarCNPJ(){
+  const cnpj=document.getElementById('mc-cnpj').value.replace(/\D/g,'');
+  if(cnpj.length!==14){toast('CNPJ inválido.','err');return;}
+  toast('Consultando CNPJ... ⏳','ok');
+  try{
+    const r=await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`);
+    if(!r.ok)throw new Error('CNPJ não encontrado');
+    const d=await r.json();
+    document.getElementById('mc-razao').value=d.razao_social||'';
+    document.getElementById('mc-end').value=`${d.logradouro||''}, ${d.numero||''}`.trim();
+    document.getElementById('mc-cidade').value=d.municipio||'';
+    document.getElementById('mc-uf').value=d.uf||'';
+    document.getElementById('mc-cep').value=d.cep||'';
+    toast('CNPJ encontrado!','ok');
+  }catch(e){toast('Erro ao consultar CNPJ: '+e.message,'err');}
+}
+
+async function salvarCliente(id){
+  const razao=document.getElementById('mc-razao').value.trim();
+  const cnpj=document.getElementById('mc-cnpj').value.trim();
+  if(!razao||!cnpj){toast('Razão Social e CNPJ são obrigatórios.','err');return;}
+  if(id){
+    const idx=DB.clientes.findIndex(c=>c.id===id);
+    if(idx>=0){
+      DB.clientes[idx].razaoSocial=razao;DB.clientes[idx].cnpj=cnpj;
+      DB.clientes[idx].ie=document.getElementById('mc-ie').value.trim();
+      DB.clientes[idx].endereco=document.getElementById('mc-end').value.trim();
+      DB.clientes[idx].cidade=document.getElementById('mc-cidade').value.trim();
+      DB.clientes[idx].uf=document.getElementById('mc-uf').value.trim();
+      DB.clientes[idx].cep=document.getElementById('mc-cep').value.trim();
+    }
+  }else{
+    const maxCod=DB.clientes.reduce((m,c)=>Math.max(m,parseInt(c.codigo||0)),0);
+    const cl={id:uid(),codigo:String(maxCod+1).padStart(5,'0'),razaoSocial:razao,cnpj,
+      ie:document.getElementById('mc-ie').value.trim(),
+      endereco:document.getElementById('mc-end').value.trim(),
+      cidade:document.getElementById('mc-cidade').value.trim(),
+      uf:document.getElementById('mc-uf').value.trim(),
+      cep:document.getElementById('mc-cep').value.trim()};
+    DB.clientes.push(cl);
+  }
+  await saveDB();closeModal('modal-cliente');toast('Cliente salvo!','ok');renderClientes(document.getElementById('main-content'));
+}
+
+// ===================== PRODUTOS =====================
+function renderItens(c){
+  c.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <div class="card-title" style="margin:0">Produtos</div>
+      <button class="btn btn-primary btn-sm" onclick="openCadastroItem()">+ Novo Produto</button>
+    </div>
+    <div id="itens-list"></div>
+  </div>`;
+  renderItensList();
+}
+
+function renderItensList(){
+  const wrap=document.getElementById('itens-list');if(!wrap)return;
+  wrap.innerHTML=`<div class="table-scroll"><table>
+    <thead><tr><th>Código</th><th>Nome</th><th>NCM</th><th>Status</th><th></th></tr></thead>
+    <tbody>${DB.itens.map(it=>`<tr>
+      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--green)">${it.codigo||'?'}</td>
+      <td style="font-weight:600">${it.nome}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:.8rem">${it.ncm||'-'}</td>
+      <td><span class="status-badge ${it.ativo?'s-concluido':'s-cancelado'}">${it.ativo?'Ativo':'Inativo'}</span></td>
+      <td style="display:flex;gap:.3rem">
+        <button class="btn btn-secondary btn-sm" onclick="openCadastroItem('${it.id}')">Editar</button>
+        <button class="btn btn-secondary btn-sm" onclick="toggleItem('${it.id}')">${it.ativo?'Desativar':'Ativar'}</button>
+      </td>
+    </tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--text-sec)">Nenhum produto.</td></tr>'}
+    </tbody>
+  </table></div>`;
+}
+
+function openCadastroItem(id){
+  const it=id?DB.itens.find(i=>i.id===id):{};
+  document.getElementById('modal-item-title').textContent=id?'Editar Produto':'Novo Produto';
+  document.getElementById('mi-id').value=id||'';
+  document.getElementById('mi-nome').value=it.nome||'';
+  document.getElementById('mi-ncm').value=it.ncm||'';
+  document.getElementById('modal-item').classList.remove('hidden');
+}
+
+async function salvarItem(id){
+  const nome=document.getElementById('mi-nome').value.trim();
+  const ncm=document.getElementById('mi-ncm').value.trim();
+  if(!nome){toast('Nome é obrigatório.','err');return;}
+  if(id){
+    const idx=DB.itens.findIndex(i=>i.id===id);
+    if(idx>=0){DB.itens[idx].nome=nome;DB.itens[idx].ncm=ncm;}
+  }else{
+    const maxCod=DB.itens.reduce((m,i)=>Math.max(m,parseInt(i.codigo||0)),0);
+    DB.itens.push({id:uid(),codigo:String(maxCod+1).padStart(3,'0'),nome,ncm,ativo:true});
+  }
+  await saveDB();closeModal('modal-item');toast('Produto salvo!','ok');renderItensList();
+}
+
+async function toggleItem(id){
+  const idx=DB.itens.findIndex(i=>i.id===id);
+  DB.itens[idx].ativo=!DB.itens[idx].ativo;
+  await saveDB();renderItensList();
+}
+
+// ===================== USUÁRIOS =====================
+function renderUsuarios(c){
+  c.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <div class="card-title" style="margin:0">Usuários</div>
+      <button class="btn btn-primary btn-sm" onclick="openCadastroUsuario()">+ Novo Usuário</button>
+    </div>
+    <div id="users-list"></div>
+  </div>`;
+  renderUsersList();
+}
+
+function renderUsersList(){
+  const wrap=document.getElementById('users-list');if(!wrap)return;
+  wrap.innerHTML=`<div class="table-scroll"><table>
+    <thead><tr><th>Nome</th><th>CPF</th><th>Perfil</th><th>Status</th><th></th></tr></thead>
+    <tbody>${DB.users.map(u=>`<tr>
+      <td style="font-weight:600">${u.nome}</td>
+      <td style="font-family:'DM Mono',monospace">${maskCPF(u.cpf)}</td>
+      <td>${u.role==='master'?'👑 Master':'👤 Vendedor'}</td>
+      <td><span class="status-badge ${u.ativo?'s-concluido':'s-cancelado'}">${u.ativo?'Ativo':'Inativo'}</span></td>
+      <td style="display:flex;gap:.3rem">
+        ${u.role!=='master'?`<button class="btn btn-secondary btn-sm" onclick="toggleUser('${u.id}')">${u.ativo?'Desativar':'Ativar'}</button>`:''}
+      </td>
+    </tr>`).join('')}
+    </tbody>
+  </table></div>`;
+}
+
+function openCadastroUsuario(){
+  document.getElementById('modal-usuario-title').textContent='Novo Vendedor';
+  document.getElementById('mu-nome').value='';
+  document.getElementById('mu-cpf').value='';
+  document.getElementById('mu-pass').value='';
+  document.getElementById('modal-usuario').classList.remove('hidden');
+}
+
+async function salvarUsuario(id){
+  const nome=document.getElementById('mu-nome').value.trim();
+  const cpf=document.getElementById('mu-cpf').value.replace(/\D/g,'');
+  const pass=document.getElementById('mu-pass').value;
+  if(!nome||cpf.length<11||pass.length<6){toast('Preencha todos os campos (CPF 11 dígitos, senha mín. 6 chars).','err');return;}
+  if(DB.users.find(u=>u.cpf===cpf&&u.id!==id)){toast('CPF já cadastrado.','err');return;}
+  DB.users.push({id:uid(),nome,cpf,senha:btoa(pass),role:'vendedor',ativo:true,criadoEm:now()});
+  await saveDB();closeModal('modal-usuario');toast('Usuário criado!','ok');renderUsersList();
+}
+
+async function toggleUser(id){
+  const idx=DB.users.findIndex(u=>u.id===id);
+  DB.users[idx].ativo=!DB.users[idx].ativo;
+  await saveDB();renderUsersList();
+}
+
+// ===================== PDF =====================
+
+// ===================== PDF =====================
+function gerarPDF(id){
+  const p=DB.pedidos.find(x=>x.id===id);
+  if(!p){toast('Pedido não encontrado.','err');return;}
+  const cl=DB.clientes.find(c=>c.id===p.clienteId)||{razaoSocial:p.clienteNome,cnpj:'-',ie:'-',endereco:'-',cidade:'-',uf:'-',cep:'-'};
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({format:'a4',unit:'mm'});
+  const W=210,M=14,CW=182;
+
+  // Header verde
+  doc.setFillColor(26,94,42);doc.rect(0,0,W,52,'F');
+
+  // Logo
+  try{
+    const LOGO_B64=document.querySelector('img[data-logo]')?.src||'';
+    if(LOGO_B64)doc.addImage(LOGO_B64,'PNG',6,4,45,45);
+  }catch(e){}
+
+  // Dados empresa
+  doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(14);
+  doc.text('MADRIGAL AGRONEGÓCIOS LTDA',57,16);
+  doc.setFont('helvetica','normal');doc.setFontSize(8);
+  doc.text('CNPJ: 66.014.625/0001-10',57,22);
+  doc.text('R. Margarida de Araújo Franco, 1164, Sala 06, Bairro Carioca',57,27);
+  doc.text('CEP 83.005-070 — São José dos Pinhais – PR',57,32);
+
+  // Número do pedido
+  doc.setFont('helvetica','bold');doc.setFontSize(20);
+  doc.text(`PV-${String(p.numero).padStart(3,'0')}`,W-M,20,{align:'right'});
+  doc.setFontSize(9);doc.setFont('helvetica','normal');
+  doc.text(`Data: ${p.dataPedido||'-'}`,W-M,27,{align:'right'});
+  doc.text(`Validade: ${p.validade||'-'}`,W-M,33,{align:'right'});
+
+  let y=60;
+
+  // Função auxiliar linha
+  const linha=(titulo,valor,yPos,bold=false)=>{
+    doc.setFont('helvetica','bold');doc.setFontSize(8);doc.setTextColor(100);
+    doc.text(titulo,M,yPos);
+    doc.setFont('helvetica',bold?'bold':'normal');doc.setTextColor(30);
+    doc.text(String(valor||'-'),M+35,yPos);
+  };
+
+  // Cliente
+  doc.setFillColor(240,247,240);doc.rect(M,y-4,CW,8,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(26,94,42);
+  doc.text('DADOS DO CLIENTE',M+1,y);y+=6;
+
+  doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(30);
+  doc.text(cl.razaoSocial,M,y);y+=5;
+  doc.setFont('helvetica','normal');doc.setFontSize(8);
+  doc.text(`CNPJ: ${cl.cnpj}   IE: ${cl.ie||'-'}`,M,y);y+=4;
+  doc.text(`${cl.endereco||'-'} — ${cl.cidade||'-'}/${cl.uf||'-'} — CEP ${cl.cep||'-'}`,M,y);y+=8;
+
+  // Condições
+  doc.setFillColor(240,247,240);doc.rect(M,y-4,CW,8,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(26,94,42);
+  doc.text('CONDIÇÕES COMERCIAIS',M+1,y);y+=7;
+
+  doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(30);
+  const cols=[[`Frete: ${p.frete||'-'}`,M],[`Pagamento: ${p.formaPgto||'-'}`,M+62],[`Local: ${p.localColeta||'-'}`,M+124]];
+  cols.forEach(([t,x])=>doc.text(t,x,y));
+  y+=5;
+  doc.text(`Data de Coleta: ${p.dataColeta||'-'}   Vendedor: ${p.vendedorNome||'-'}`,M,y);y+=9;
+
+  // Itens
+  doc.setFillColor(240,247,240);doc.rect(M,y-4,CW,8,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(26,94,42);
+  doc.text('ITENS DO PEDIDO',M+1,y);y+=7;
+
+  // Cabeçalho tabela
+  doc.setFillColor(26,94,42);doc.rect(M,y-4,CW,7,'F');
+  doc.setTextColor(255);doc.setFont('helvetica','bold');doc.setFontSize(8);
+  doc.text('#',M+2,y);doc.text('Produto / NCM',M+10,y);
+  doc.text('Qtd (ton)',M+110,y,{align:'right'});
+  doc.text('Preço/ton',M+140,y,{align:'right'});
+  doc.text('Total',M+CW-1,y,{align:'right'});
+  y+=6;
+
+  let total=0;
+  (p.itens||[]).forEach((it,i)=>{
+    const subtotal=(parseFloat(it.qtd)||0)*(parseFloat(it.preco)||0);total+=subtotal;
+    if(i%2===0){doc.setFillColor(248,252,248);doc.rect(M,y-4,CW,7,'F');}
+    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(30);
+    doc.text(String(i+1).padStart(2,'0'),M+2,y);
+    doc.text(it.nome.substring(0,45),M+10,y);
+    doc.setFont('helvetica','normal');
+    doc.text(String(parseFloat(it.qtd||0).toFixed(2)),M+110,y,{align:'right'});
+    doc.text(`R$ ${parseFloat(it.preco||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}`,M+140,y,{align:'right'});
+    doc.text(`R$ ${subtotal.toLocaleString('pt-BR',{minimumFractionDigits:2})}`,M+CW-1,y,{align:'right'});
+    y+=7;
+  });
+
+  // Total
+  doc.setFillColor(26,94,42);doc.rect(M,y-2,CW,9,'F');
+  doc.setTextColor(255);doc.setFont('helvetica','bold');doc.setFontSize(10);
+  doc.text('TOTAL',M+5,y+4);
+  doc.text(`R$ ${total.toLocaleString('pt-BR',{minimumFractionDigits:2})}`,M+CW-1,y+4,{align:'right'});
+  y+=16;
+
+  // Obs
+  if(p.obs){
+    doc.setFont('helvetica','bold');doc.setFontSize(8.5);doc.setTextColor(26,94,42);
+    doc.text('Observações:',M,y);y+=4;
+    doc.setFont('helvetica','normal');doc.setTextColor(60);
+    doc.setFontSize(8);
+    const linhasObs=doc.splitTextToSize(p.obs,CW);
+    doc.text(linhasObs,M,y);y+=linhasObs.length*4+6;
+  }
+
+  // Assinatura
+  y=Math.max(y,240);
+  doc.setTextColor(30);doc.setFont('helvetica','normal');doc.setFontSize(9);
+  const cx=W/2;
+  doc.line(cx-45,y,cx+45,y);y+=4;
+  doc.text(p.clienteNome,cx,y,{align:'center'});y+=3;
+  doc.setFontSize(8);doc.setTextColor(100);
+  doc.text('Assinatura e Carimbo do Cliente',cx,y,{align:'center'});
+
+  // Rodapé
+  doc.setFontSize(7);doc.setTextColor(130);
+  doc.text('Madrigal Agronegócios LTDA — CNPJ 66.014.625/0001-10 — SJP/PR',W/2,290,{align:'center'});
+
+  doc.save(`PV-${String(p.numero).padStart(3,'0')}_${p.clienteNome.replace(/[^a-zA-Z0-9]/g,'_')}.pdf`);
+  toast('PDF gerado com sucesso!','ok');
+}
+
+
 // ===================== UTILITÁRIOS =====================
 async function renumerarPedido(pedidoId, novoNumero){
   const idx=DB.pedidos.findIndex(p=>p.id===pedidoId);
@@ -1519,6 +2007,63 @@ async function renumerarPedido(pedidoId, novoNumero){
 async function listarPedidos(){
   DB.pedidos.forEach(p=>console.log(p.id,'PV-'+String(p.numero).padStart(3,'0'),p.clienteNome,p.status));
 }
+
+function toast(msg, tipo='ok'){
+  let t=document.getElementById('toast-container');
+  if(!t){t=document.createElement('div');t.id='toast-container';
+    t.style.cssText='position:fixed;bottom:1.5rem;right:1.5rem;z-index:9999;display:flex;flex-direction:column;gap:.4rem;';
+    document.body.appendChild(t);}
+  const d=document.createElement('div');
+  d.style.cssText=`background:${tipo==='err'?'#c0392b':'#1a5e2a'};color:#fff;padding:.6rem 1.1rem;border-radius:8px;font-size:.82rem;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.2);animation:fadeInUp .2s ease;max-width:320px`;
+  d.textContent=msg;t.appendChild(d);
+  setTimeout(()=>{d.style.opacity='0';d.style.transition='opacity .3s';setTimeout(()=>d.remove(),300);},3000);
+}
+
+function renderCamposFinanceiros(p, ton, readonly){
+  const margemLiq=ton>0&&p.custoPorTon&&p.comissaoPorTon
+    ?p.valorTotal-(parseFloat(p.custoPorTon)*ton)-(parseFloat(p.comissaoPorTon)*ton)
+    :null;
+  return `<div class="conclusao-box" style="border-color:var(--green);margin-bottom:.8rem">
+    <div class="conclusao-title" style="color:var(--green)">💰 Resultado Financeiro ${readonly?'(confirmado)':'(estimado)'}</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Custo de Compra (R$/ton) *</label>
+        <input id="fin-custo" type="number" step="0.01" value="${p.custoPorTon||''}" placeholder="Ex: 3800.00"
+          ${readonly?'readonly style="background:var(--gray-light)"':''}
+          onchange="atualizarResultado('${p.id}',this.value,document.getElementById('fin-com').value)">
+      </div>
+      <div class="form-group">
+        <label>Comissão Vendedor (R$/ton)</label>
+        <input id="fin-com" type="number" step="0.01" value="${p.comissaoPorTon||''}" placeholder="Ex: 50.00"
+          ${readonly?'readonly style="background:var(--gray-light)"':''}
+          onchange="atualizarResultado('${p.id}',document.getElementById('fin-custo').value,this.value)">
+      </div>
+    </div>
+    <div id="fin-preview-${p.id}" style="display:${p.custoPorTon?'grid':'none'};grid-template-columns:repeat(4,1fr);gap:.5rem;margin-top:.6rem">
+      ${p.custoPorTon?`
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+        <div style="font-size:.65rem;color:var(--text-sec)">Receita</div>
+        <div style="font-weight:700;font-size:.82rem;color:var(--blue);font-family:'DM Mono',monospace">${fmtMoney(p.valorTotal)}</div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+        <div style="font-size:.65rem;color:var(--text-sec)">Custo Total</div>
+        <div style="font-weight:700;font-size:.82rem;color:var(--red);font-family:'DM Mono',monospace">${fmtMoney(parseFloat(p.custoPorTon)*ton)}</div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;text-align:center">
+        <div style="font-size:.65rem;color:var(--text-sec)">Comissão</div>
+        <div style="font-weight:700;font-size:.82rem;color:var(--amber);font-family:'DM Mono',monospace">${fmtMoney((parseFloat(p.comissaoPorTon)||0)*ton)}</div>
+      </div>
+      <div style="background:#fff;border:1px solid ${margemLiq>=0?'var(--green-mid)':'var(--red)'};border-radius:var(--radius);padding:.5rem;text-align:center">
+        <div style="font-size:.65rem;color:var(--text-sec)">Margem</div>
+        <div style="font-weight:700;font-size:.82rem;color:${margemLiq>=0?'var(--green)':'var(--red)'};font-family:'DM Mono',monospace">${fmtMoney(margemLiq)}</div>
+      </div>`:''}
+    </div>
+    ${!readonly?`<div style="margin-top:.7rem;display:flex;justify-content:flex-end">
+      <button class="btn btn-primary btn-sm" onclick="salvarFinanceiro('${p.id}')">💾 Salvar valores</button>
+    </div>`:''}
+  </div>`;
+}
+
 
 initApp();
 </script>
