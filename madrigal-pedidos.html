@@ -489,40 +489,6 @@ async function createMaster(){
   await saveDB();
   currentUser=master;
   sessionStorage.setItem('madrigal_user',JSON.stringify(master));
-  document.getElementById('auth-screen').classList.add('hidden');
-  showApp();
-}
-
-async function login(){
-  const cpf=document.getElementById('login-cpf').value.replace(/\D/g,'');
-  const pass=document.getElementById('login-pass').value;
-  const err=document.getElementById('login-error');
-  err.classList.add('hidden');
-  const user=DB.users.find(u=>u.cpf===cpf&&u.senha===btoa(pass)&&u.ativo);
-  if(!user){err.textContent='CPF ou senha incorretos.';err.classList.remove('hidden');return;}
-  currentUser=user;
-  sessionStorage.setItem('madrigal_user',JSON.stringify(user));
-  document.getElementById('auth-screen').classList.add('hidden');
-  showApp();
-}
-
-function logout(){currentUser=null;sessionStorage.removeItem('madrigal_user');location.reload();}
-
-async function createMaster(){
-  const name=document.getElementById('setup-name').value.trim();
-  const cpf=document.getElementById('setup-cpf').value.replace(/\D/g,'');
-  const pass=document.getElementById('setup-pass').value;
-  const pass2=document.getElementById('setup-pass2').value;
-  const err=document.getElementById('setup-error');
-  if(!name||cpf.length<11||pass.length<6||pass!==pass2){
-    err.textContent='Preencha todos os campos (CPF 11 dígitos, senhas iguais, mín. 6 caracteres).';
-    err.classList.remove('hidden');return;
-  }
-  const master={id:uid(),nome:name,cpf,senha:btoa(pass),role:'master',ativo:true,criadoEm:now()};
-  DB.users.push(master);
-  await saveDB();
-  currentUser=master;
-  sessionStorage.setItem('madrigal_user',JSON.stringify(master));
   document.getElementById('auth-screen').style.display='none';
   showApp();
 }
@@ -1143,7 +1109,7 @@ function renderSugestoes(lista){
     </div>`).join('')+'</div>';
 }
 async function salvarPedido(editId){
-  const clienteId=document.getElementById('np-cliente').value;
+  const clienteId=npData.clienteId||'';
   if(!clienteId){toast('Selecione um cliente.','err');return;}
   const cliente=DB.clientes.find(c=>c.id===clienteId);
   const itensOk=npData.itens.filter(i=>i.itemId&&i.qtd&&i.preco);
@@ -1543,3 +1509,18 @@ function renderArquivos(p){
 }
 
 
+// ===================== UTILITÁRIOS =====================
+async function renumerarPedido(pedidoId, novoNumero){
+  const idx=DB.pedidos.findIndex(p=>p.id===pedidoId);
+  if(idx<0){console.error('Pedido não encontrado:',pedidoId);return;}
+  DB.pedidos[idx].numero=String(novoNumero).padStart(3,'0');
+  await saveDB();
+}
+async function listarPedidos(){
+  DB.pedidos.forEach(p=>console.log(p.id,'PV-'+String(p.numero).padStart(3,'0'),p.clienteNome,p.status));
+}
+
+initApp();
+</script>
+</body>
+</html>
