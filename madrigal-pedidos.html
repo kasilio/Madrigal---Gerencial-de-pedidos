@@ -1422,6 +1422,105 @@ async function concluirPedido(id){
   await saveDB();closeModal('modal-pedido');toast('Pedido concluído! 🎉','ok');navigate('pedidos');
 }
 
+async function uploadArquivo(pedId,tipo,input){
+  if(!input.files||!input.files[0])return;
+  const file=input.files[0];
+  const maxMB=5;
+  if(file.size>maxMB*1024*1024){toast(`Arquivo muito grande. Máximo ${maxMB}MB.`,'err');return;}
+  toast('Lendo arquivo... ⏳','ok');
+  try{
+    // Ler como base64
+    const b64=await new Promise((res,rej)=>{
+      const r=new FileReader();
+      r.onload=()=>res(r.result);
+      r.onerror=rej;
+      r.readAsDataURL(file);
+    });
+    // Salvar no localStorage primeiro (acesso rápido local)
+    const idx=DB.pedidos.findIndex(p=>p.id===pedId);
+    if(!DB.pedidos[idx].arquivos)DB.pedidos[idx].arquivos=[];
+    DB.pedidos[idx].arquivos=DB.pedidos[idx].arquivos.filter(a=>a.tipo!==tipo);
+    const arqObj={tipo,nome:file.name,mime:file.type,data:dateStr(),b64};
+    DB.pedidos[idx].arquivos.push(arqObj);
+    if(tipo==='assinado'){
+      DB.pedidos[idx].status='validar_assinatura';
+      addHistorico(pedId,'validar_assinatura',`PDF assinado anexado: ${file.name}`,currentUser.nome);
+    } else {
+      addHistorico(pedId,DB.pedidos[idx].status,`Arquivo anexado (${labelTipo(tipo)}): ${file.name}`,currentUser.nome);
+    }
+    // Salvar dados do pedido (sem b64 para não estourar Firestore principal)
+    await saveDB();
+    toast('Salvando na nuvem... ☁️','ok');
+    // Salvar b64 em documento separado no Firestore
+    await salvarArquivoNuvem(pedId, tipo, b64, file.name, file.type);
+    toast('Arquivo enviado! ✓','ok');
+    openPedido(pedId);
+  }catch(e){
+    console.error('Upload error:',e);
+    toast('Erro ao enviar: '+e.message,'err');
+  }
+}
+
+// Salva arquivo na nuvem dividindo em chunks de 700KB (limite Firestore ~1MB/doc)
+const CHUNK_SIZE = 700000; // ~700KB por chunk
+const FS_ARQ_BASE = `https://firestore.googleapis.com/v1/projects/madrigal---gestao-de-pedidos/databases/(default)/documents/arquivos`;
+
+async function salvarArquivoNuvem(pedId, tipo, b64, nome, mime){
+  const docId=`${pedId}_${tipo}`;
+  const chunks=[];
+  for(let i=0;i<b64.length;i+=CHUNK_SIZE) chunks.push(b64.slice(i,i+CHUNK_SIZE));
+  try{
+    // Salva metadados + total de chunks
+    const metaUrl=`${FS_ARQ_BASE}/${docId}_meta?key=${FS_KEY}`;
+    await fetch(metaUrl,{method:'PATCH',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({fields:{
+        pedId:{stringValue:pedId},tipo:{stringValue:tipo},
+        nome:{stringValue:nome},mime:{stringValue:mime||''},
+        data:{stringValue:dateStr()},chunks:{integerValue:chunks.length}
+      }})
+    });
+    // Salva cada chunk
+    for(let i=0;i<chunks.length;i++){
+      const chunkUrl=`${FS_ARQ_BASE}/${docId}_chunk${i}?key=${FS_KEY}`;
+      await fetch(chunkUrl,{method:'PATCH',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({fields:{data:{stringValue:chunks[i]}}})
+      });
+    }
+  }catch(e){
+    console.warn('Falha ao salvar arquivo na nuvem:',e.message);
+  }
+}
+
+// Carrega arquivo da nuvem remontando chunks
+async function carregarArquivoNuvem(pedId, tipo){
+  const docId=`${pedId}_${tipo}`;
+  try{
+    // Busca metadados
+    const metaUrl=`${FS_ARQ_BASE}/${docId}_meta?key=${FS_KEY}`;
+    const metaR=await fetch(metaUrl);
+    if(!metaR.ok) return null;
+    const meta=await metaR.json();
+    const totalChunks=parseInt(meta.fields?.chunks?.integerValue||1);
+    // Busca todos os chunks em paralelo
+    const promises=[];
+    for(let i=0;i<totalChunks;i++){
+      const url=`${FS_ARQ_BASE}/${docId}_chunk${i}?key=${FS_KEY}`;
+      promises.push(fetch(url).then(r=>r.ok?r.json():null));
+    }
+    const docs=await Promise.all(promises);
+    const parts=docs.map(d=>d?.fields?.data?.stringValue||'');
+    return parts.join('') || null;
+  }catch(e){
+    return null;
+  }
+}
+
+function labelTipo(tipo){
+  const m={assinado:'Pedido Assinado',nf_fornecedor:'NF Fornecedor',nf_venda:'NF Venda',laudo:'Laudo',comprovante:'Comprovante'};
+  return m[tipo]||tipo;
+}
+
+
 function renderArquivos(p){
   const arqs=p.arquivos||[];
   if(!arqs.length)return'<div style="font-size:.82rem;color:var(--text-sec);padding:.3rem 0">Nenhum arquivo anexado ainda.</div>';
@@ -1434,152 +1533,13 @@ function renderArquivos(p){
         <div style="font-weight:600;font-size:.8rem">${labels[a.tipo]||a.tipo}</div>
         <div style="font-size:.72rem;color:var(--text-sec);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.nome}</div>
       </div>
-      <span style="font-size:.68rem;color:var(--text-sec);flex-shrink:0">${a.data||''}</span>
-      <div style="display:flex;gap:.3rem;flex-shrink:0">
-        ${(a.url||a.b64)
-          ? `<button class="btn btn-secondary btn-sm" style="padding:.2rem .55rem;font-size:.75rem" title="Visualizar" onclick="visualizarArquivo('${p.id}','${a.tipo}')">👁 Ver</button>
-             <button class="btn btn-secondary btn-sm" style="padding:.2rem .55rem;font-size:.75rem" title="Baixar" onclick="downloadArquivoLocal('${p.id}','${a.tipo}')">⬇ Baixar</button>`
-          : '<span style="font-size:.7rem;color:var(--text-sec);font-style:italic">indisponível</span>'
-        }
+      <span style="font-size:.68rem;color:var(--text-sec);flex-shrink:0">${a.data}</span>
+      <div style="display:flex;gap:.3rem;flex-shrink:0;align-items:center">
+        <button class="btn btn-secondary btn-sm" style="padding:.2rem .55rem;font-size:.75rem" onclick="visualizarArquivo('${p.id}','${a.tipo}')">👁 Ver</button>
+        <button class="btn btn-secondary btn-sm" style="padding:.2rem .55rem;font-size:.75rem" onclick="downloadArquivoLocal('${p.id}','${a.tipo}')">⬇ Baixar</button>
+        ${!a.b64?'<span title="Arquivo salvo na nuvem" style="font-size:.75rem;color:var(--amber)">☁️</span>':'<span title="Arquivo disponível localmente" style="font-size:.75rem;color:var(--green)">✓</span>'}
       </div>
     </div>`).join('')+'</div>';
 }
 
 
-function downloadArquivoLocal(pedId, tipo){
-  const p=DB.pedidos.find(x=>x.id===pedId);
-  const arq=p?.arquivos?.find(a=>a.tipo===tipo);
-  if(!arq){toast('Arquivo não encontrado.','err');return;}
-  // Prioriza URL do Firebase Storage (cross-device)
-  const src = arq.url || arq.b64;
-  if(!src){toast('Arquivo não disponível.','err');return;}
-  const a=document.createElement('a');
-  a.href=src; a.download=arq.nome; a.target='_blank'; a.click();
-}
-
-function visualizarArquivo(pedId, tipo){
-  const p=DB.pedidos.find(x=>x.id===pedId);
-  const arq=p?.arquivos?.find(a=>a.tipo===tipo);
-  if(!arq){toast('Arquivo não encontrado.','err');return;}
-  const src = arq.url || arq.b64;
-  if(!src){toast('Arquivo não disponível.','err');return;}
-  // Se for URL do Storage, abre diretamente
-  if(arq.url){window.open(arq.url,'_blank');return;}
-  // Fallback para b64 (arquivos antigos)
-  const win=window.open();
-  if(!win){toast('Permita pop-ups no navegador para visualizar.','err');return;}
-  if(src.startsWith('data:image')){
-    win.document.write(`<!DOCTYPE html><html><head><title>${arq.nome}</title></head><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${src}" style="max-width:100%;max-height:100vh;object-fit:contain"></body></html>`);
-  } else {
-    win.document.write(`<!DOCTYPE html><html><head><title>${arq.nome}</title></head><body style="margin:0"><embed src="${src}" type="application/pdf" style="width:100%;height:100vh"><p style="font-family:sans-serif;padding:1rem">Se o arquivo não abrir, <a href="${src}" download="${arq.nome}">clique aqui para baixar</a>.</p></body></html>`);
-  }
-}
-
-// ===== TOAST =====
-function toast(msg, tipo='ok'){
-  const wrap=document.getElementById('toast-wrap');
-  if(!wrap)return;
-  const t=document.createElement('div');
-  t.className='toast '+(tipo==='err'?'err':'ok');
-  t.textContent=msg;
-  wrap.appendChild(t);
-  setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300);},2800);
-}
-
-// ===== UPLOAD FIREBASE STORAGE =====
-async function uploadArquivo(pedId, tipo, inputEl){
-  const file=inputEl.files?.[0];
-  if(!file)return;
-
-  // Limite 20 MB
-  if(file.size>20*1024*1024){toast('Arquivo muito grande. Máximo 20 MB.','err');return;}
-
-  // Feedback visual no label
-  const label=inputEl.closest('label');
-  const textoOrig=label?label.querySelector('input')?label.textContent:'':'';
-  if(label){
-    // Preserva o input e só muda o texto visível
-    label.setAttribute('data-orig',label.textContent);
-    label.style.pointerEvents='none';
-    label.style.opacity='0.6';
-    // Insere span de loading
-    const sp=document.createElement('span');
-    sp.id='up-loading-'+pedId+'-'+tipo;
-    sp.textContent=' ⏳ Enviando...';
-    label.appendChild(sp);
-  }
-
-  try{
-    // Caminho no Storage
-    const safeName=file.name.replace(/[^a-zA-Z0-9._\-]/g,'_');
-    const path='arquivos/'+pedId+'/'+tipo+'/'+Date.now()+'_'+safeName;
-    const encodedPath=encodeURIComponent(path);
-
-    // Upload via Firebase Storage REST API
-    const uploadUrl=ST_BASE+'/'+encodedPath+'?uploadType=media&name='+encodedPath+'&key='+FS_KEY;
-
-    const resp=await fetch(uploadUrl,{
-      method:'POST',
-      headers:{'Content-Type':file.type||'application/octet-stream'},
-      body:file,
-    });
-
-    if(!resp.ok){
-      let errMsg='HTTP '+resp.status;
-      try{const e=await resp.json();errMsg=e?.error?.message||errMsg;}catch(_){}
-      throw new Error(errMsg);
-    }
-
-    const result=await resp.json();
-
-    // URL de download pública
-    const token=result.downloadTokens||'';
-    const downloadURL=ST_BASE+'/'+encodedPath+'?alt=media'+(token?'&token='+token:'')+'&key='+FS_KEY;
-
-    // Atualiza o pedido no DB
-    const idx=DB.pedidos.findIndex(x=>x.id===pedId);
-    if(idx===-1)throw new Error('Pedido não encontrado');
-
-    // Remove arquivo anterior do mesmo tipo
-    DB.pedidos[idx].arquivos=(DB.pedidos[idx].arquivos||[]).filter(a=>a.tipo!==tipo);
-
-    DB.pedidos[idx].arquivos.push({
-      tipo,
-      nome:file.name,
-      url:downloadURL,
-      data:new Date().toLocaleDateString('pt-BR'),
-    });
-
-    // Registra no histórico do pedido
-    const labelsHist={assinado:'Pedido Assinado',nf_fornecedor:'NF Fornecedor',nf_venda:'NF Venda',laudo:'Laudo',comprovante:'Comprovante de Pagto'};
-    addHistorico(pedId, DB.pedidos[idx].status, 'Arquivo "'+(labelsHist[tipo]||tipo)+'" anexado: '+file.name, currentUser.nome);
-
-    await saveDB();
-    toast('✓ Arquivo enviado com sucesso!','ok');
-
-    // Re-renderiza o modal do pedido (com delay para saveDB concluir)
-    const modalPed=document.getElementById('modal-pedido');
-    if(modalPed&&!modalPed.classList.contains('hidden')){
-      setTimeout(()=>openPedido(pedId),120);
-    }
-
-  }catch(e){
-    console.error('uploadArquivo erro:',e);
-    // Mensagem específica para erro de permissão do Storage
-    let msgErro='Erro ao enviar: '+e.message;
-    if(e.message.includes('403')||e.message.toLowerCase().includes('permission')||e.message.toLowerCase().includes('unauthorized')){
-      msgErro='❌ Permissão negada no Storage. Ative o Firebase Storage e configure as regras de segurança no Console do Firebase.';
-    }
-    toast(msgErro,'err');
-    // Restaura label ao estado clicável
-    if(label){
-      label.style.pointerEvents='';
-      label.style.opacity='';
-      const sp=document.getElementById('up-loading-'+pedId+'-'+tipo);
-      if(sp)sp.remove();
-    }
-  }
-}
-</script>
-</body>
-</html>
