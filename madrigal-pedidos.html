@@ -1065,11 +1065,33 @@ function renderNovoPedido(c,editId=null){
     <div class="form-row-3">
       <div class="form-group"><label>Frete</label><select id="np-frete"><option value="FOB" ${npData.frete==='FOB'?'selected':''}>FOB</option><option value="CIF" ${npData.frete==='CIF'?'selected':''}>CIF</option></select></div>
       <div class="form-group"><label>Forma de Pagamento</label><select id="np-pgto">${DB.formas_pgto.map(f=>`<option value="${f}" ${npData.formaPgto===f?'selected':''}>${f}</option>`).join('')}</select></div>
-      <div class="form-group"><label>Data de Coleta</label><input type="text" id="np-coleta" value="${npData.dataColeta||''}" placeholder="Ex: 14/04/2026"></div>
+      <div class="form-group">
+          <label>Data de Coleta</label>
+          <div style="position:relative;display:flex;align-items:center">
+            <input type="text" id="np-coleta" value="${npData.dataColeta||''}" placeholder="DD/MM/AAAA"
+              maxlength="10" inputmode="numeric"
+              oninput="mascaraData(this)"
+              style="padding-right:2.4rem"
+            >
+            <input type="date" id="np-coleta-cal" tabindex="-1"
+              style="position:absolute;right:0;top:0;width:2.2rem;height:100%;opacity:0;cursor:pointer;z-index:2"
+              oninput="sincronizarCalendario(this,'np-coleta')"
+            >
+            <span onclick="document.getElementById('np-coleta-cal').showPicker?document.getElementById('np-coleta-cal').showPicker():document.getElementById('np-coleta-cal').click()"
+              style="position:absolute;right:.55rem;font-size:1rem;cursor:pointer;z-index:1;color:var(--green)" title="Abrir calendário">📅</span>
+          </div>
+        </div>
     </div>
     <div class="form-row">
       <div class="form-group"><label>Local de Coleta</label><input type="text" id="np-local" value="${npData.localColeta||'Araucária – PR'}"></div>
-      <div class="form-group"><label>Validade do Pedido</label><input type="text" id="np-validade" value="${npData.validade||''}"></div>
+      <div class="form-group">
+        <label>Validade do Pedido</label>
+        <input type="text" id="np-validade" value="${calcularValidade()}"
+          readonly
+          style="background:var(--gray-light);color:var(--text-sec);cursor:not-allowed"
+          title="Calculada automaticamente: 10 dias após hoje">
+        <div style="font-size:.7rem;color:var(--text-sec);margin-top:.2rem">⏱ Calculada automaticamente (10 dias)</div>
+      </div>
     </div>
     <div class="form-group"><label>Observações</label><textarea id="np-obs">${npData.obs||''}</textarea></div>
     <div id="np-total" style="text-align:right;font-size:1.1rem;font-weight:700;color:var(--green);padding:.8rem 0;font-family:'DM Mono',monospace"></div>
@@ -1178,7 +1200,7 @@ async function salvarPedido(editId){
   const valorTotal=itensOk.reduce((a,it)=>a+(parseFloat(it.qtd)||0)*(parseFloat(it.preco)||0),0);
   const frete=document.getElementById('np-frete').value,pgto=document.getElementById('np-pgto').value,
     coleta=document.getElementById('np-coleta').value,local=document.getElementById('np-local').value,
-    validade=document.getElementById('np-validade').value,obs=document.getElementById('np-obs').value;
+    validade=calcularValidade(),obs=document.getElementById('np-obs').value;
   if(editId){
     const idx=DB.pedidos.findIndex(p=>p.id===editId);
     Object.assign(DB.pedidos[idx],{clienteId,clienteNome:cliente.razaoSocial,itens:itensOk,valorTotal,frete,formaPgto:pgto,dataColeta:coleta,localColeta:local,validade,obs,status:'aguardando_aprovacao'});
@@ -1573,6 +1595,35 @@ function renderArquivos(p){
 
 
 // ===================== UTILITÁRIOS BASE =====================
+// ===================== HELPERS DE DATA =====================
+function calcularValidade(){
+  const d=new Date();
+  d.setDate(d.getDate()+10);
+  return d.toLocaleDateString('pt-BR');
+}
+
+function mascaraData(input){
+  let v=input.value.replace(/\D/g,'');
+  if(v.length>8)v=v.slice(0,8);
+  if(v.length>=5)       v=v.slice(0,2)+'/'+v.slice(2,4)+'/'+v.slice(4);
+  else if(v.length>=3)  v=v.slice(0,2)+'/'+v.slice(2);
+  input.value=v;
+  // Sincronizar com o input[type=date] oculto
+  if(v.length===10){
+    const [d,m,a]=v.split('/');
+    const iso=`${a}-${m}-${d}`;
+    const cal=document.getElementById('np-coleta-cal');
+    if(cal)cal.value=iso;
+  }
+}
+
+function sincronizarCalendario(calInput, textId){
+  const val=calInput.value; // formato YYYY-MM-DD
+  if(!val)return;
+  const [a,m,d]=val.split('-');
+  document.getElementById(textId).value=`${d}/${m}/${a}`;
+}
+
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 function now(){return new Date().toISOString();}
 function dateStr(){const d=new Date();return d.toLocaleDateString('pt-BR');}
