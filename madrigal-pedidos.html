@@ -288,6 +288,7 @@ tr:nth-child(even) td{background:var(--gray-light)}
         <div class="nav-item" onclick="navigate('itens')" id="nav-itens"><span class="icon">📦</span>Produtos</div>
         <div class="nav-item" onclick="navigate('usuarios')" id="nav-usuarios"><span class="icon">👥</span>Usuários</div>
         <div class="nav-item" onclick="navigate('clientes')" id="nav-clientes"><span class="icon">🏢</span>Clientes</div>
+        <div class="nav-item" onclick="navigate('pagamentos')" id="nav-pagamentos"><span class="icon">💳</span>Cond. Pagamento</div>
       </div>
     </nav>
     <div class="sidebar-bottom"><button class="btn btn-secondary btn-sm" onclick="logout()" style="width:100%">Sair</button></div>
@@ -332,6 +333,27 @@ tr:nth-child(even) td{background:var(--gray-light)}
     <div class="modal-header"><h3 id="modal-pedido-title">Pedido</h3><button class="btn-close" onclick="closeModal('modal-pedido')">✕</button></div>
     <div class="modal-body" id="modal-pedido-body"></div>
     <div class="modal-footer" id="modal-pedido-footer"></div>
+  </div>
+</div>
+<div id="modal-pgto" class="modal-overlay hidden">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header"><h3 id="modal-pgto-title">Condição de Pagamento</h3><button class="btn-close" onclick="closeModal('modal-pgto')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Descrição *</label><input id="pgto-nome" placeholder="Ex: 30 dias boleto"></div>
+      <div class="form-group"><label>Tipo</label>
+        <select id="pgto-tipo">
+          <option value="a_prazo">A prazo</option>
+          <option value="antecipado">Antecipado</option>
+          <option value="a_vista">À vista</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Observação</label><input id="pgto-obs" placeholder="Detalhes adicionais (opcional)"></div>
+      <div id="pgto-err" class="error-msg" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-pgto')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarPgto()">Salvar</button>
+    </div>
   </div>
 </div>
 <div id="modal-form" class="modal-overlay hidden">
@@ -396,6 +418,17 @@ function ensureDB(){
     DB.itens.forEach((it,idx)=>{if(!it.codigo||it.codigo.length>3)it.codigo=String(idx+1).padStart(3,'0');});
   }
   if(!DB.formas_pgto)DB.formas_pgto=['Antecipado','À vista no carregamento','À vista na descarga','A combinar'];
+  // Inicializar estrutura de condições de pagamento
+  if(!DB.pagamentos){
+    DB.pagamentos=[
+      {id:'pg1',nome:'Antecipado',tipo:'antecipado',obs:'',ativo:true},
+      {id:'pg2',nome:'À vista no carregamento',tipo:'a_vista',obs:'',ativo:true},
+      {id:'pg3',nome:'À vista na descarga',tipo:'a_vista',obs:'',ativo:true},
+      {id:'pg4',nome:'A combinar',tipo:'a_prazo',obs:'',ativo:true},
+    ];
+  }
+  // Sincronizar formas_pgto com pagamentos ativos
+  DB.formas_pgto=DB.pagamentos.filter(p=>p.ativo).map(p=>p.nome);
   // Corrigir numeração de pedidos históricos conhecidos
   const numFix = {
     'cl-agrozacca': '001',
@@ -584,14 +617,14 @@ function navigate(page){
   document.querySelector('.sidebar')?.classList.remove('open');
   document.getElementById('sidebar-overlay')?.classList.remove('open');
   // Bloquear páginas restritas para vendedor
-  const paginasMaster=['dashboard','itens','usuarios','clientes'];
+  const paginasMaster=['dashboard','itens','usuarios','clientes','pagamentos'];
   if(currentUser&&currentUser.role!=='master'&&paginasMaster.includes(page)){
     toast('Acesso restrito ao administrador master.','err');
     page='pedidos';
   }
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   const el=document.getElementById('nav-'+page);if(el)el.classList.add('active');
-  const titles={dashboard:'Dashboard',pedidos:'Pedidos','novo-pedido':'Novo Pedido',itens:'Produtos',usuarios:'Usuários',clientes:'Clientes'};
+  const titles={dashboard:'Dashboard',pedidos:'Pedidos','novo-pedido':'Novo Pedido',itens:'Produtos',usuarios:'Usuários',clientes:'Clientes',pagamentos:'Condições de Pagamento'};
   document.getElementById('topbar-title').textContent=titles[page]||page;
   document.getElementById('topbar-actions').innerHTML='';
   const c=document.getElementById('main-content');
@@ -601,6 +634,7 @@ function navigate(page){
   else if(page==='itens')renderItens(c);
   else if(page==='usuarios')renderUsuarios(c);
   else if(page==='clientes')renderClientes(c);
+  else if(page==='pagamentos')renderPagamentos(c);
   updateBadges();
 }
 
@@ -1170,7 +1204,8 @@ function openPedido(id){
 
   // Permissões por status
   const canPDF = !['aguardando_aprovacao'].includes(st) && st!=='cancelado';
-  const PGTO_ANTECIPADO = ['Antecipado','À vista no carregamento'];
+  // Condições que exigem pagamento antecipado = tipo 'antecipado' ou 'a_vista'
+  const PGTO_ANTECIPADO = (DB.pagamentos||[]).filter(p=>p.tipo==='antecipado'||p.tipo==='a_vista').map(p=>p.nome);
 
   document.getElementById('modal-pedido-title').textContent=`PV-${String(p.numero).padStart(3,'0')} — ${p.clienteNome}`;
 
@@ -2095,6 +2130,84 @@ function maskCPFLocal(v){return String(v).replace(/\D/g,'').replace(/(\d{3})(\d{
 function openCadastroClienteModal(){
   if(!document.getElementById('modal-cliente')){renderClientes({innerHTML:''});}
   openCadastroCliente();
+}
+
+
+// ===================== CONDIÇÕES DE PAGAMENTO =====================
+function renderPagamentos(c){
+  const tipoBadge={
+    'antecipado':'<span style="background:#e8f5e9;color:#1a5e2a;font-size:.7rem;font-weight:700;padding:.15rem .5rem;border-radius:12px">Antecipado</span>',
+    'a_vista':'<span style="background:var(--blue-light);color:var(--blue);font-size:.7rem;font-weight:700;padding:.15rem .5rem;border-radius:12px">À vista</span>',
+    'a_prazo':'<span style="background:var(--amber-light);color:var(--amber);font-size:.7rem;font-weight:700;padding:.15rem .5rem;border-radius:12px">A prazo</span>',
+  };
+  c.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <div class="card-title" style="margin:0">Condições de Pagamento</div>
+      <button class="btn btn-primary btn-sm" onclick="openPgto()">+ Nova Condição</button>
+    </div>
+    <div class="alert alert-info" style="margin-bottom:1rem;font-size:.8rem">
+      💡 As condições marcadas como <b>Ativas</b> aparecem no seletor ao criar novos pedidos. Condições do tipo <b>Antecipado</b> ou <b>À vista</b> exigem comprovante de pagamento no fluxo do pedido.
+    </div>
+    <div class="table-scroll"><table>
+      <thead><tr><th>#</th><th>Descrição</th><th>Tipo</th><th>Observação</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        ${(DB.pagamentos||[]).map((pg,i)=>`<tr>
+          <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--green);width:40px">${String(i+1).padStart(2,'0')}</td>
+          <td style="font-weight:600">${pg.nome}</td>
+          <td>${tipoBadge[pg.tipo]||pg.tipo}</td>
+          <td style="font-size:.8rem;color:var(--text-sec)">${pg.obs||'-'}</td>
+          <td><span class="status-badge ${pg.ativo?'s-concluido':'s-cancelado'}">${pg.ativo?'Ativo':'Inativo'}</span></td>
+          <td style="display:flex;gap:.3rem;flex-wrap:wrap">
+            <button class="btn btn-secondary btn-sm" onclick="openPgto('${pg.id}')">Editar</button>
+            <button class="btn btn-secondary btn-sm" onclick="togglePgto('${pg.id}')">${pg.ativo?'Desativar':'Ativar'}</button>
+          </td>
+        </tr>`).join('')||'<tr><td colspan="6" style="text-align:center;color:var(--text-sec)">Nenhuma condição cadastrada.</td></tr>'}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
+function openPgto(id){
+  const pg=id?(DB.pagamentos||[]).find(p=>p.id===id):null;
+  document.getElementById('modal-pgto-title').textContent=id?'Editar Condição':'Nova Condição de Pagamento';
+  document.getElementById('pgto-nome').value=pg?.nome||'';
+  document.getElementById('pgto-tipo').value=pg?.tipo||'a_prazo';
+  document.getElementById('pgto-obs').value=pg?.obs||'';
+  document.getElementById('pgto-err').style.display='none';
+  document.getElementById('modal-pgto').dataset.editId=id||'';
+  document.getElementById('modal-pgto').classList.remove('hidden');
+  setTimeout(()=>document.getElementById('pgto-nome').focus(),80);
+}
+
+async function salvarPgto(){
+  const nome=document.getElementById('pgto-nome').value.trim();
+  const tipo=document.getElementById('pgto-tipo').value;
+  const obs=document.getElementById('pgto-obs').value.trim();
+  const errEl=document.getElementById('pgto-err');
+  if(!nome){errEl.textContent='Informe a descrição.';errEl.style.display='block';return;}
+  const editId=document.getElementById('modal-pgto').dataset.editId;
+  if(!DB.pagamentos)DB.pagamentos=[];
+  if(editId){
+    const idx=DB.pagamentos.findIndex(p=>p.id===editId);
+    if(idx>=0){DB.pagamentos[idx].nome=nome;DB.pagamentos[idx].tipo=tipo;DB.pagamentos[idx].obs=obs;}
+  }else{
+    DB.pagamentos.push({id:uid(),nome,tipo,obs,ativo:true});
+  }
+  // Sincronizar formas_pgto
+  DB.formas_pgto=DB.pagamentos.filter(p=>p.ativo).map(p=>p.nome);
+  await saveDB();
+  closeModal('modal-pgto');
+  toast('Condição salva!','ok');
+  renderPagamentos(document.getElementById('main-content'));
+}
+
+async function togglePgto(id){
+  const idx=(DB.pagamentos||[]).findIndex(p=>p.id===id);
+  if(idx<0)return;
+  DB.pagamentos[idx].ativo=!DB.pagamentos[idx].ativo;
+  DB.formas_pgto=DB.pagamentos.filter(p=>p.ativo).map(p=>p.nome);
+  await saveDB();
+  renderPagamentos(document.getElementById('main-content'));
 }
 
 initApp();
