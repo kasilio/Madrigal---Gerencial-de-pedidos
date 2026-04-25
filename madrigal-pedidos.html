@@ -352,9 +352,14 @@ const LOCAL_KEY='madrigal_db_v4';
 let DB={};
 
 function defaultItens(){return[
-  {id:'i1',codigo:'UPE25',nome:'Ureia Pecuária (46% N) – Sacaria 25 kg',ncm:'3102.10.10',ativo:true},
-  {id:'i2',codigo:'UPE1000',nome:'Ureia Pecuária (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',ativo:true},
-  {id:'i3',codigo:'UGR1000',nome:'Ureia Granulada (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',ativo:true},
+  {id:'i1',codigo:'001',nome:'Ureia Pecuária (46% N) – Sacaria 25 kg',ncm:'3102.10.10',ativo:true},
+  {id:'i2',codigo:'002',nome:'Ureia Pecuária (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',ativo:true},
+  {id:'i3',codigo:'003',nome:'Ureia Granulada (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',ativo:true},
+  {id:'i4',codigo:'004',nome:'Ureia Granulada (46% N) – Sacaria 25 kg',ncm:'3102.10.10',ativo:true},
+  {id:'i5',codigo:'005',nome:'Ureia Prill (46% N) – Sacaria 25 kg',ncm:'3102.10.10',ativo:true},
+  {id:'i6',codigo:'006',nome:'Ureia Prill (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',ativo:true},
+  {id:'i7',codigo:'007',nome:'Ureia Agrícola (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',ativo:true},
+  {id:'i8',codigo:'008',nome:'Ureia Agrícola (46% N) – Sacaria 25 kg',ncm:'3102.10.10',ativo:true},
 ];}
 
 function saveLocal(){try{localStorage.setItem(LOCAL_KEY,JSON.stringify(DB));}catch(e){}}
@@ -373,7 +378,23 @@ function ensureDB(){
   if(!DB.users)DB.users=[];
   if(!DB.pedidos)DB.pedidos=[];
   if(!DB.clientes)DB.clientes=[];
-  if(!DB.itens||!DB.itens.length)DB.itens=defaultItens();
+  if(!DB.itens||!DB.itens.length){DB.itens=defaultItens();}
+  else{
+    // Migrar códigos antigos para sequencial e adicionar produtos novos
+    const codMap={'UPE25':'001','UPE1000':'002','UGR1000':'003'};
+    DB.itens.forEach(it=>{if(codMap[it.codigo])it.codigo=codMap[it.codigo];});
+    // Adicionar produtos novos que não existem ainda
+    const novos=[
+      {id:'i4',codigo:'004',nome:'Ureia Granulada (46% N) – Sacaria 25 kg',ncm:'3102.10.10',ativo:true},
+      {id:'i5',codigo:'005',nome:'Ureia Prill (46% N) – Sacaria 25 kg',ncm:'3102.10.10',ativo:true},
+      {id:'i6',codigo:'006',nome:'Ureia Prill (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',ativo:true},
+      {id:'i7',codigo:'007',nome:'Ureia Agrícola (46% N) – Big Bag 1.000 kg',ncm:'3102.10.10',ativo:true},
+      {id:'i8',codigo:'008',nome:'Ureia Agrícola (46% N) – Sacaria 25 kg',ncm:'3102.10.10',ativo:true},
+    ];
+    novos.forEach(n=>{if(!DB.itens.find(i=>i.id===n.id||i.nome===n.nome))DB.itens.push(n);});
+    // Garantir que todos têm código sequencial correto
+    DB.itens.forEach((it,idx)=>{if(!it.codigo||it.codigo.length>3)it.codigo=String(idx+1).padStart(3,'0');});
+  }
   if(!DB.formas_pgto)DB.formas_pgto=['Antecipado','À vista no carregamento','À vista na descarga','A combinar'];
   // Corrigir numeração de pedidos históricos conhecidos
   const numFix = {
