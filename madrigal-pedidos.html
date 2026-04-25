@@ -2016,11 +2016,22 @@ function renderUsuarios(c){
       <div class="modal-body">
         <div class="form-group"><label>Nome completo *</label><input id="mu-nome" placeholder="Nome do vendedor"></div>
         <div class="form-group"><label>CPF *</label><input id="mu-cpf" placeholder="000.000.000-00"></div>
-        <div class="form-group"><label>Senha *</label><input id="mu-pass" type="password" placeholder="Mínimo 6 caracteres"></div>
+        <div id="mu-perfil-group" class="form-group"><label>Perfil</label>
+          <select id="mu-perfil">
+            <option value="vendedor">👤 Vendedor</option>
+            <option value="master">👑 Master</option>
+          </select>
+        </div>
+        <div class="form-group" id="mu-pass-group">
+          <label id="mu-pass-label">Senha *</label>
+          <input id="mu-pass" type="password" placeholder="Mínimo 6 caracteres">
+          <div id="mu-pass-hint" style="font-size:.72rem;color:var(--amber);margin-top:.25rem;display:none">⚠️ Deixe em branco para manter a senha atual. Preencha apenas para alterar.</div>
+        </div>
+        <div id="mu-err" class="error-msg" style="display:none"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('modal-usuario')">Cancelar</button>
-        <button class="btn btn-primary" onclick="salvarUsuario()">Criar</button>
+        <button class="btn btn-primary" id="mu-btn-salvar" onclick="salvarUsuario()">Criar</button>
       </div>
     </div>`;
     document.body.appendChild(m);
@@ -2036,28 +2047,91 @@ function renderUsersList(){
       <td style="font-family:'DM Mono',monospace">${maskCPF(u.cpf)}</td>
       <td>${u.role==='master'?'👑 Master':'👤 Vendedor'}</td>
       <td><span class="status-badge ${u.ativo?'s-concluido':'s-cancelado'}">${u.ativo?'Ativo':'Inativo'}</span></td>
-      <td>${u.role!=='master'?`<button class="btn btn-secondary btn-sm" onclick="toggleUser('${u.id}')">${u.ativo?'Desativar':'Ativar'}</button>`:''}</td>
+      <td style="display:flex;gap:.3rem;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-secondary btn-sm" onclick="editarUsuario('${u.id}')" style="display:flex;align-items:center;gap:.3rem">✏️ Editar</button>
+        ${u.role!=='master'?`<button class="btn btn-secondary btn-sm" onclick="toggleUser('${u.id}')" style="color:${u.ativo?'var(--red)':'var(--green)'}">${u.ativo?'Desativar':'Ativar'}</button>`:''}
+      </td>
     </tr>`).join('')}
     </tbody>
   </table></div>`;
 }
 
 function openCadastroUsuario(){
+  const modal=document.getElementById('modal-usuario');
+  modal.dataset.editId='';
   document.getElementById('modal-usuario-title').textContent='Novo Vendedor';
   document.getElementById('mu-nome').value='';
   document.getElementById('mu-cpf').value='';
+  document.getElementById('mu-cpf').disabled=false;
+  document.getElementById('mu-perfil').value='vendedor';
   document.getElementById('mu-pass').value='';
-  document.getElementById('modal-usuario').classList.remove('hidden');
+  document.getElementById('mu-pass').placeholder='Mínimo 6 caracteres';
+  document.getElementById('mu-pass-label').textContent='Senha *';
+  document.getElementById('mu-pass-hint').style.display='none';
+  document.getElementById('mu-btn-salvar').textContent='Criar';
+  document.getElementById('mu-err').style.display='none';
+  modal.classList.remove('hidden');
+  setTimeout(()=>document.getElementById('mu-nome').focus(),80);
+}
+
+function editarUsuario(id){
+  const u=DB.users.find(x=>x.id===id);
+  if(!u){toast('Usuário não encontrado.','err');return;}
+  const modal=document.getElementById('modal-usuario');
+  modal.dataset.editId=id;
+  document.getElementById('modal-usuario-title').textContent='Editar Usuário';
+  document.getElementById('mu-nome').value=u.nome;
+  document.getElementById('mu-cpf').value=maskCPF(u.cpf);
+  document.getElementById('mu-cpf').disabled=true; // CPF não pode ser alterado
+  document.getElementById('mu-perfil').value=u.role;
+  document.getElementById('mu-pass').value='';
+  document.getElementById('mu-pass').placeholder='Nova senha (deixe em branco para manter)';
+  document.getElementById('mu-pass-label').textContent='Nova Senha';
+  document.getElementById('mu-pass-hint').style.display='block';
+  document.getElementById('mu-btn-salvar').textContent='Salvar alterações';
+  document.getElementById('mu-err').style.display='none';
+  modal.classList.remove('hidden');
+  setTimeout(()=>document.getElementById('mu-nome').focus(),80);
 }
 
 async function salvarUsuario(){
+  const modal=document.getElementById('modal-usuario');
+  const editId=modal.dataset.editId||'';
   const nome=document.getElementById('mu-nome').value.trim();
   const cpf=document.getElementById('mu-cpf').value.replace(/\D/g,'');
   const pass=document.getElementById('mu-pass').value;
-  if(!nome||cpf.length<11||pass.length<6){toast('Preencha todos os campos (CPF 11 dígitos, senha mín. 6 chars).','err');return;}
-  if(DB.users.find(u=>u.cpf===cpf)){toast('CPF já cadastrado.','err');return;}
-  DB.users.push({id:uid(),nome,cpf,senha:btoa(pass),role:'vendedor',ativo:true,criadoEm:now()});
-  await saveDB();closeModal('modal-usuario');toast('Usuário criado!','ok');renderUsersList();
+  const perfil=document.getElementById('mu-perfil').value;
+  const errEl=document.getElementById('mu-err');
+  errEl.style.display='none';
+
+  if(!nome){errEl.textContent='Informe o nome.';errEl.style.display='block';return;}
+
+  if(editId){
+    // EDIÇÃO
+    const idx=DB.users.findIndex(u=>u.id===editId);
+    if(idx<0){toast('Usuário não encontrado.','err');return;}
+    DB.users[idx].nome=nome;
+    DB.users[idx].role=perfil;
+    if(pass){
+      if(pass.length<6){errEl.textContent='Senha deve ter ao menos 6 caracteres.';errEl.style.display='block';return;}
+      DB.users[idx].senha=btoa(pass);
+    }
+    await saveDB();
+    // Atualizar sessão se editou a si mesmo
+    if(currentUser.id===editId){
+      currentUser=DB.users[idx];
+      sessionStorage.setItem('madrigal_user',JSON.stringify(currentUser));
+      document.getElementById('sb-user-name').textContent=currentUser.nome;
+    }
+    closeModal('modal-usuario');toast('Usuário atualizado!','ok');renderUsersList();
+  } else {
+    // CRIAÇÃO
+    if(cpf.length<11){errEl.textContent='CPF deve ter 11 dígitos.';errEl.style.display='block';return;}
+    if(pass.length<6){errEl.textContent='Senha deve ter ao menos 6 caracteres.';errEl.style.display='block';return;}
+    if(DB.users.find(u=>u.cpf===cpf)){errEl.textContent='CPF já cadastrado.';errEl.style.display='block';return;}
+    DB.users.push({id:uid(),nome,cpf,senha:btoa(pass),role:perfil,ativo:true,criadoEm:now()});
+    await saveDB();closeModal('modal-usuario');toast('Usuário criado!','ok');renderUsersList();
+  }
 }
 
 async function toggleUser(id){
