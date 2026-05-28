@@ -364,6 +364,78 @@ tr:nth-child(even) td{background:var(--gray-light)}
   </div>
 </div>
 
+
+<!-- MODAL CLIENTE (estático) -->
+<div id="modal-cliente" class="modal-overlay hidden">
+  <div class="modal" style="max-width:580px">
+    <div class="modal-header"><h3 id="modal-cliente-title">Cliente</h3><button class="btn-close" onclick="closeModal('modal-cliente')">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="mc-id">
+      <div class="form-row">
+        <div class="form-group"><label>CNPJ</label><div style="display:flex;gap:.4rem"><input id="mc-cnpj" placeholder="00.000.000/0001-00" inputmode="numeric"><button class="btn btn-secondary btn-sm" onclick="buscarCNPJ()" style="flex-shrink:0;white-space:nowrap">🔍 Buscar</button></div></div>
+        <div class="form-group"><label>Inscrição Estadual</label><input id="mc-ie" placeholder="IE ou ISENTO"></div>
+      </div>
+      <div class="form-group"><label>Razão Social *</label><input id="mc-razao" placeholder="Nome completo da empresa"></div>
+      <div class="form-group"><label>E-mail</label><input id="mc-email" type="email" placeholder="nfe@empresa.com.br"></div>
+      <div class="form-group"><label>Telefone</label><input id="mc-fone" placeholder="(00) 00000-0000" inputmode="tel"></div>
+      <div class="form-group"><label>Endereço</label><input id="mc-end" placeholder="Rua, número, bairro"></div>
+      <div class="form-row-3">
+        <div class="form-group"><label>Cidade</label><input id="mc-cidade"></div>
+        <div class="form-group"><label>UF</label><input id="mc-uf" maxlength="2" style="text-transform:uppercase"></div>
+        <div class="form-group"><label>CEP</label><input id="mc-cep" inputmode="numeric"></div>
+      </div>
+      <div id="mc-err" class="error-msg" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-cliente')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarCliente(document.getElementById('mc-id').value)">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PRODUTO (estático) -->
+<div id="modal-item" class="modal-overlay hidden">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header"><h3 id="modal-item-title">Produto</h3><button class="btn-close" onclick="closeModal('modal-item')">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="mi-id">
+      <div class="form-group"><label>Nome *</label><input id="mi-nome" placeholder="Ex: Ureia Pecuária Big Bag"></div>
+      <div class="form-group"><label>NCM</label><input id="mi-ncm" placeholder="Ex: 3102.10.10" inputmode="numeric"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-item')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarItem(document.getElementById('mi-id').value)">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL USUÁRIO (estático) -->
+<div id="modal-usuario" class="modal-overlay hidden">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header"><h3 id="modal-usuario-title">Usuário</h3><button class="btn-close" onclick="closeModal('modal-usuario')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Nome completo *</label><input id="mu-nome" placeholder="Nome do vendedor"></div>
+      <div class="form-group"><label>CPF *</label><input id="mu-cpf" placeholder="000.000.000-00" inputmode="numeric"></div>
+      <div class="form-group" id="mu-perfil-group"><label>Perfil</label>
+        <select id="mu-perfil">
+          <option value="vendedor">👤 Vendedor</option>
+          <option value="master">👑 Master</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label id="mu-pass-label">Senha *</label>
+        <input id="mu-pass" type="password" placeholder="Mínimo 6 caracteres">
+        <div id="mu-pass-hint" style="font-size:.72rem;color:var(--text-sec);margin-top:.25rem;display:none">Deixe em branco para manter a senha atual</div>
+      </div>
+      <div id="mu-err" class="error-msg" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-usuario')">Cancelar</button>
+      <button class="btn btn-primary" id="mu-btn-salvar" onclick="salvarUsuario()">Criar</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ===== STORAGE =====
 // Firebase REST
@@ -1835,33 +1907,6 @@ function renderClientes(c){
       </tbody>
     </table></div>
   </div>`;
-  // Modais de cliente
-  if(!document.getElementById('modal-cliente')){
-    const m=document.createElement('div');
-    m.id='modal-cliente';m.className='modal-overlay hidden';
-    m.innerHTML=`<div class="modal" style="max-width:580px">
-      <div class="modal-header"><h3 id="modal-cliente-title">Cliente</h3><button class="btn-close" onclick="closeModal('modal-cliente')">✕</button></div>
-      <div class="modal-body">
-        <input type="hidden" id="mc-id">
-        <div class="form-row">
-          <div class="form-group"><label>CNPJ</label><div style="display:flex;gap:.4rem"><input id="mc-cnpj" placeholder="00.000.000/0001-00"><button class="btn btn-secondary btn-sm" onclick="buscarCNPJ()" style="flex-shrink:0">🔍</button></div></div>
-          <div class="form-group"><label>Inscrição Estadual</label><input id="mc-ie" placeholder="IE ou ISENTO"></div>
-        </div>
-        <div class="form-group"><label>Razão Social *</label><input id="mc-razao" placeholder="Nome completo da empresa"></div>
-        <div class="form-group"><label>Endereço</label><input id="mc-end" placeholder="Rua, número, bairro"></div>
-        <div class="form-row-3">
-          <div class="form-group"><label>Cidade</label><input id="mc-cidade"></div>
-          <div class="form-group"><label>UF</label><input id="mc-uf" maxlength="2"></div>
-          <div class="form-group"><label>CEP</label><input id="mc-cep"></div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeModal('modal-cliente')">Cancelar</button>
-        <button class="btn btn-primary" onclick="salvarCliente(document.getElementById('mc-id').value)">Salvar</button>
-      </div>
-    </div>`;
-    document.body.appendChild(m);
-  }
 }
 
 function openCadastroCliente(id){
@@ -1871,11 +1916,15 @@ function openCadastroCliente(id){
   document.getElementById('mc-razao').value=cl.razaoSocial||'';
   document.getElementById('mc-cnpj').value=cl.cnpj||'';
   document.getElementById('mc-ie').value=cl.ie||'';
+  document.getElementById('mc-email').value=cl.email||'';
+  document.getElementById('mc-fone').value=cl.fone||'';
   document.getElementById('mc-end').value=cl.endereco||'';
   document.getElementById('mc-cidade').value=cl.cidade||'';
   document.getElementById('mc-uf').value=cl.uf||'';
   document.getElementById('mc-cep').value=cl.cep||'';
+  document.getElementById('mc-err').style.display='none';
   document.getElementById('modal-cliente').classList.remove('hidden');
+  setTimeout(()=>document.getElementById('mc-razao').focus(),80);
 }
 
 async function buscarCNPJ(){
@@ -1898,28 +1947,34 @@ async function buscarCNPJ(){
 async function salvarCliente(id){
   const razao=document.getElementById('mc-razao').value.trim();
   const cnpj=document.getElementById('mc-cnpj').value.trim();
-  if(!razao||!cnpj){toast('Razão Social e CNPJ são obrigatórios.','err');return;}
+  const errEl=document.getElementById('mc-err');
+  errEl.style.display='none';
+  if(!razao){errEl.textContent='Razão Social é obrigatória.';errEl.style.display='block';return;}
+  if(!cnpj){errEl.textContent='CNPJ é obrigatório.';errEl.style.display='block';return;}
+  const dados={
+    razaoSocial:razao, cnpj,
+    ie:document.getElementById('mc-ie').value.trim(),
+    email:document.getElementById('mc-email').value.trim(),
+    fone:document.getElementById('mc-fone').value.trim(),
+    endereco:document.getElementById('mc-end').value.trim(),
+    cidade:document.getElementById('mc-cidade').value.trim(),
+    uf:document.getElementById('mc-uf').value.trim().toUpperCase(),
+    cep:document.getElementById('mc-cep').value.trim(),
+  };
   if(id){
     const idx=DB.clientes.findIndex(c=>c.id===id);
-    if(idx>=0){
-      DB.clientes[idx].razaoSocial=razao;DB.clientes[idx].cnpj=cnpj;
-      DB.clientes[idx].ie=document.getElementById('mc-ie').value.trim();
-      DB.clientes[idx].endereco=document.getElementById('mc-end').value.trim();
-      DB.clientes[idx].cidade=document.getElementById('mc-cidade').value.trim();
-      DB.clientes[idx].uf=document.getElementById('mc-uf').value.trim();
-      DB.clientes[idx].cep=document.getElementById('mc-cep').value.trim();
-    }
+    if(idx>=0) Object.assign(DB.clientes[idx], dados);
   }else{
     const maxCod=DB.clientes.reduce((m,c)=>Math.max(m,parseInt(c.codigo||0)),0);
-    const cl={id:uid(),codigo:String(maxCod+1).padStart(5,'0'),razaoSocial:razao,cnpj,
-      ie:document.getElementById('mc-ie').value.trim(),
-      endereco:document.getElementById('mc-end').value.trim(),
-      cidade:document.getElementById('mc-cidade').value.trim(),
-      uf:document.getElementById('mc-uf').value.trim(),
-      cep:document.getElementById('mc-cep').value.trim()};
-    DB.clientes.push(cl);
+    DB.clientes.push({id:uid(), codigo:String(maxCod+1).padStart(5,'0'), ...dados});
   }
-  await saveDB();closeModal('modal-cliente');toast('Cliente salvo!','ok');renderClientes(document.getElementById('main-content'));
+  await saveDB();
+  closeModal('modal-cliente');
+  toast('Cliente salvo!','ok');
+  // Atualizar tela se estiver em clientes, senão só refresca listas
+  const main=document.getElementById('main-content');
+  const titulo=document.getElementById('topbar-title').textContent;
+  if(titulo==='Clientes') renderClientes(main);
 }
 
 // ===================== PRODUTOS =====================
@@ -1932,23 +1987,6 @@ function renderItens(c){
     <div id="itens-list"></div>
   </div>`;
   renderItensList();
-  if(!document.getElementById('modal-item')){
-    const m=document.createElement('div');
-    m.id='modal-item';m.className='modal-overlay hidden';
-    m.innerHTML=`<div class="modal" style="max-width:480px">
-      <div class="modal-header"><h3 id="modal-item-title">Produto</h3><button class="btn-close" onclick="closeModal('modal-item')">✕</button></div>
-      <div class="modal-body">
-        <input type="hidden" id="mi-id">
-        <div class="form-group"><label>Nome *</label><input id="mi-nome" placeholder="Ex: Ureia Pecuária Big Bag"></div>
-        <div class="form-group"><label>NCM</label><input id="mi-ncm" placeholder="Ex: 3102.10.10"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeModal('modal-item')">Cancelar</button>
-        <button class="btn btn-primary" onclick="salvarItem(document.getElementById('mi-id').value)">Salvar</button>
-      </div>
-    </div>`;
-    document.body.appendChild(m);
-  }
 }
 
 function renderItensList(){
@@ -2008,36 +2046,7 @@ function renderUsuarios(c){
     <div id="users-list"></div>
   </div>`;
   renderUsersList();
-  if(!document.getElementById('modal-usuario')){
-    const m=document.createElement('div');
-    m.id='modal-usuario';m.className='modal-overlay hidden';
-    m.innerHTML=`<div class="modal" style="max-width:480px">
-      <div class="modal-header"><h3 id="modal-usuario-title">Usuário</h3><button class="btn-close" onclick="closeModal('modal-usuario')">✕</button></div>
-      <div class="modal-body">
-        <div class="form-group"><label>Nome completo *</label><input id="mu-nome" placeholder="Nome do vendedor"></div>
-        <div class="form-group"><label>CPF *</label><input id="mu-cpf" placeholder="000.000.000-00"></div>
-        <div id="mu-perfil-group" class="form-group"><label>Perfil</label>
-          <select id="mu-perfil">
-            <option value="vendedor">👤 Vendedor</option>
-            <option value="master">👑 Master</option>
-          </select>
-        </div>
-        <div class="form-group" id="mu-pass-group">
-          <label id="mu-pass-label">Senha *</label>
-          <input id="mu-pass" type="password" placeholder="Mínimo 6 caracteres">
-          <div id="mu-pass-hint" style="font-size:.72rem;color:var(--amber);margin-top:.25rem;display:none">⚠️ Deixe em branco para manter a senha atual. Preencha apenas para alterar.</div>
-        </div>
-        <div id="mu-err" class="error-msg" style="display:none"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeModal('modal-usuario')">Cancelar</button>
-        <button class="btn btn-primary" id="mu-btn-salvar" onclick="salvarUsuario()">Criar</button>
-      </div>
-    </div>`;
-    document.body.appendChild(m);
-  }
 }
-
 function renderUsersList(){
   const wrap=document.getElementById('users-list');if(!wrap)return;
   wrap.innerHTML=`<div class="table-scroll"><table>
